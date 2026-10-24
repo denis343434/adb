@@ -5,7 +5,6 @@
 #include <QSysInfo>
 
 #include "../adb/adbexecutor.h"
-#include "../automation/blockpuzzlebot.h"
 #include "../automation/workflowengine.h"
 #include "../mock/mockdeviceprovider.h"
 #include "../performance/perfmonitor.h"
@@ -52,9 +51,6 @@ AppContext::Options AppContext::parseArguments(const QStringList &args)
             o.farm = true;
         } else if (a == QLatin1String("--targets")) {
             o.workflowTargets = next().split(QLatin1Char(','), Qt::SkipEmptyParts);
-        } else if (a == QLatin1String("--autoplay")) {
-            o.autoplay = true;
-            o.farm = true;
         } else if (a == QLatin1String("--mock-devices")) {
             o.mockDevices = next().toInt();
             o.farm = true;
@@ -78,7 +74,6 @@ QString AppContext::usageText()
         "  QtScrcpy.exe --scan                      scan the configured subnet for ADB devices and exit\n"
         "  QtScrcpy.exe --run-workflow \"Name\" [--targets id1,id2,group:Box1]\n"
         "                                           run a saved workflow (headless UI) \n"
-        "  QtScrcpy.exe --autoplay [--targets id1,id2]  play BlockPuzzle on the devices (all online by default)\n"
         "  QtScrcpy.exe --farm --mock-devices N     start with N simulated devices (UI/automation testing)\n"
         "  QtScrcpy.exe --data-dir PATH             override the settings/database directory\n"
         "  QtScrcpy.exe --no-auto-mirror            do not auto-start mirrors on this launch\n"
@@ -205,7 +200,6 @@ void AppContext::shutdown()
     DeviceDiscoveryService::instance().stop();
     DeviceHealthMonitor::instance().stop();
     KeepAwakeManager::instance().stop();
-    BlockPuzzleAutoplay::instance().stop();    // lift any finger before the mirrors close
     DeviceService::instance().shutdown();
     DeviceRegistry::instance().flush();
     WorkflowEngine::instance().shutdown();    // cancel workers before the executors stop

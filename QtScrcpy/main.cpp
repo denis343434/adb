@@ -20,7 +20,6 @@
 
 #include "adb/adbexecutor.h"
 #include "adb/adbparsers.h"
-#include "automation/blockpuzzlebot.h"
 #include "automation/workflowengine.h"
 #include "core/appcontext.h"
 #include "core/farmsettings.h"
@@ -252,15 +251,6 @@ int main(int argc, char *argv[])
                     targets = farm::WorkflowEngine::resolveTargets(QStringLiteral("all"), QString(), QStringList());
                 }
                 farm::WorkflowEngine::instance().start(wf, targets, farm::FarmSettings::instance().automationConcurrency(), QStringLiteral("command line"));
-            });
-        }
-
-        // --autoplay [--targets a,b]: the BlockPuzzle bot, once discovery has found the phones.
-        if (opts.autoplay) {
-            const QStringList targetSpec = opts.workflowTargets;
-            QTimer::singleShot(8000, farm, [targetSpec]() {
-                const QStringList targets = targetSpec.isEmpty() ? farm::DeviceRegistry::instance().onlineIds() : targetSpec;
-                farm::BlockPuzzleAutoplay::instance().start(targets);
             });
         }
 
