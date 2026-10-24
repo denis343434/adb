@@ -245,6 +245,25 @@ QString parseWmSize(const QString &stdOut)
     return m.hasMatch() ? m.captured(1) : QString();
 }
 
+QString aspectPreservingWmSize(const QString &stdOut, const QString &target)
+{
+    static const QRegularExpression physicalRe(QStringLiteral("Physical size:\\s*(\\d+)x(\\d+)"));
+    static const QRegularExpression targetRe(QStringLiteral("^\\s*(\\d+)x\\d+\\s*$"));
+    const QRegularExpressionMatch phys = physicalRe.match(stdOut);
+    const QRegularExpressionMatch tgt = targetRe.match(target);
+    if (!phys.hasMatch() || !tgt.hasMatch()) {
+        return QString();
+    }
+    const qint64 physW = phys.captured(1).toLongLong();
+    const qint64 physH = phys.captured(2).toLongLong();
+    const qint64 width = tgt.captured(1).toLongLong();
+    if (physW <= 0 || physH <= 0 || width <= 0) {
+        return QString();
+    }
+    const qint64 height = ((width * physH + physW / 2) / physW + 1) & ~qint64(1);
+    return QStringLiteral("%1x%2").arg(width).arg(height);
+}
+
 qint64 parseDfFreeKb(const QString &stdOut)
 {
     const QStringList lines = stdOut.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -300,6 +319,59 @@ QString parseWlanIp(const QString &stdOut)
         }
     }
     return QString();
+}
+
+namespace {
+constexpr quint32 kCmdCnxn = 0x4e584e43;    // "CNXN"
+constexpr quint32 kCmdAuth = 0x48545541;    // "AUTH"
+constexpr quint32 kCmdStls = 0x534c5453;    // "STLS"
+constexpr int kHeaderSize = 24;
+
+void appendLe32(QByteArray &out, quint32 v)
+{
+    for (int i = 0; i < 4; ++i) {
+        out.append(static_cast<char>((v >> (8 * i)) & 0xff));
+    }
+}
+
+quint32 readLe32(const QByteArray &data, int offset)
+{
+    quint32 v = 0;
+    for (int i = 3; i >= 0; --i) {
+        v = (v << 8) | static_cast<quint8>(data.at(offset + i));
+    }
+    return v;
+}
+} // namespace
+
+QByteArray adbConnectPacket()
+{
+    const QByteArray payload("host::\0", 7);
+    quint32 sum = 0;
+    for (char c : payload) {
+        sum += static_cast<quint8>(c);
+    }
+    QByteArray packet;
+    appendLe32(packet, kCmdCnxn);
+    appendLe32(packet, 0x01000001);    // protocol version
+    appendLe32(packet, 256 * 1024);    // max payload
+    appendLe32(packet, static_cast<quint32>(payload.size()));
+    appendLe32(packet, sum);           // checked only by pre-0x01000001 adbd
+    appendLe32(packet, kCmdCnxn ^ 0xffffffffu);
+    packet.append(payload);
+    return packet;
+}
+
+bool isAdbHandshakeReply(const QByteArray &data)
+{
+    if (data.size() < kHeaderSize) {
+        return false;
+    }
+    const quint32 cmd = readLe32(data, 0);
+    if (cmd != kCmdCnxn && cmd != kCmdAuth && cmd != kCmdStls) {
+        return false;
+    }
+    return readLe32(data, 20) == (cmd ^ 0xffffffffu);
 }
 
 } // namespace adb

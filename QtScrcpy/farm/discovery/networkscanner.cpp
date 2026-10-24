@@ -8,6 +8,8 @@
 #include <QThread>
 #include <QTimer>
 
+#include "../adb/adbparsers.h"
+
 namespace farm {
 
 // Lives on the scanner thread; owns the sockets.
@@ -118,7 +120,19 @@ private:
             }
             pump();
         };
-        connect(socket, &QTcpSocket::connected, this, [complete]() { complete(true); });
+        // An accepted connection is not enough (TUN/fake-ip VPNs accept every address):
+        // speak the first ADB packet and only count hosts that answer like adbd.
+        auto reply = std::make_shared<QByteArray>();
+        connect(socket, &QTcpSocket::connected, this, [this, socket, timer]() {
+            socket->write(adb::adbConnectPacket());
+            timer->start(m_timeoutMs);    // fresh budget for the handshake reply
+        });
+        connect(socket, &QTcpSocket::readyRead, this, [socket, reply, complete]() {
+            reply->append(socket->readAll());
+            if (reply->size() >= 24) {
+                complete(adb::isAdbHandshakeReply(*reply));
+            }
+        });
         connect(socket, &QTcpSocket::errorOccurred, this, [complete](QAbstractSocket::SocketError) { complete(false); });
         connect(timer, &QTimer::timeout, this, [complete]() { complete(false); });
         timer->start(m_timeoutMs);

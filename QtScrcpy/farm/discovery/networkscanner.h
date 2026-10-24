@@ -17,7 +17,8 @@ namespace farm {
 
 /**
  * Asynchronous, bounded TCP port probe of an IPv4 range (the "is anything
- * listening on 5555?" step of LAN discovery). Runs on its own thread with an
+ * listening on 5555?" step of LAN discovery). A host counts only if it answers
+ * the ADB CNXN packet like adbd, not merely accepts the connection. Runs on its own thread with an
  * event loop and at most `concurrency` sockets in flight; a whole /24 takes
  * ~2-4 s. Never blocks the caller. Hosts in `priorityHosts` (known devices,
  * ARP neighbours) are probed first so they appear immediately.

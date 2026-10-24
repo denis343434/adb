@@ -217,7 +217,7 @@ QWidget *SettingsPage::mirroring()
     f->addRow(QString(), check(tr("Automatic reconnect with backoff (1, 2, 5, 10, 30, 60 s)"), QStringLiteral("mirror/autoReconnect"), true, page));
     f->addRow(tr("Max reconnect attempts (0 = unlimited)"), spin(QStringLiteral("mirror/reconnectMaxAttempts"), 0, 0, 1000, page));
     f->addRow(QString(), check(tr("Normalise resolution/density before capture (same coordinate space on every phone)"), QStringLiteral("mirror/normalizeResolution"), true, page));
-    f->addRow(tr("Normalised size"), edit(QStringLiteral("mirror/normalizedSize"), QStringLiteral("1080x2220"), page));
+    f->addRow(tr("Normalised size (width is used; height follows each phone's aspect)"), edit(QStringLiteral("mirror/normalizedSize"), QStringLiteral("1080x2220"), page));
     f->addRow(tr("Normalised density"), edit(QStringLiteral("mirror/normalizedDensity"), QStringLiteral("480"), page));
     f->addRow(QString(), check(tr("Adaptive quality when many mirrors are active"), QStringLiteral("mirror/adaptiveQuality"), true, page));
     return page;

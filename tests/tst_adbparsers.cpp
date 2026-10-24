@@ -130,6 +130,14 @@ private slots:
     {
         QCOMPARE(parseWmSize(QStringLiteral("Physical size: 1440x2960\nOverride size: 1080x2220\n")), QStringLiteral("1080x2220"));
         QCOMPARE(parseWmSize(QStringLiteral("Physical size: 1440x2960\n")), QStringLiteral("1440x2960"));
+        // Height follows the PHYSICAL aspect (an existing override is ignored), rounded to even.
+        QCOMPARE(aspectPreservingWmSize(QStringLiteral("Physical size: 1080x2400\nOverride size: 1080x2220\n"), QStringLiteral("1080x2220")), QStringLiteral("1080x2400"));
+        QCOMPARE(aspectPreservingWmSize(QStringLiteral("Physical size: 1440x3200\n"), QStringLiteral("1080x2220")), QStringLiteral("1080x2400"));
+        QCOMPARE(aspectPreservingWmSize(QStringLiteral("Physical size: 720x1520\n"), QStringLiteral("1080x2220")), QStringLiteral("1080x2280"));
+        QCOMPARE(aspectPreservingWmSize(QStringLiteral("Physical size: 1080x2340\n"), QStringLiteral(" 1080x1 ")), QStringLiteral("1080x2340"));
+        QCOMPARE(aspectPreservingWmSize(QStringLiteral("Physical size: 1081x2341\n"), QStringLiteral("1080x2220")), QStringLiteral("1080x2340"));
+        QVERIFY(aspectPreservingWmSize(QStringLiteral("garbage"), QStringLiteral("1080x2220")).isEmpty());
+        QVERIFY(aspectPreservingWmSize(QStringLiteral("Physical size: 1080x2400\n"), QStringLiteral("abc")).isEmpty());
         QCOMPARE(parseDfFreeKb(QStringLiteral("Filesystem     1K-blocks    Used Available Use% Mounted on\n/dev/block/dm-0  57000000 30000000  26500000  54% /data\n")), qint64(26500000));
         QCOMPARE(parseWifiRssi(QStringLiteral("mWifiInfo SSID: \"Farm\", BSSID: aa, RSSI: -56, Link speed: 72Mbps")), -56);
         QCOMPARE(parseWifiRssi(QStringLiteral("nothing")), 0);
@@ -139,6 +147,24 @@ private slots:
         QVERIFY(!parseConnectSuccess(QStringLiteral("cannot connect to 192.168.100.13:5555: No connection could be made")));
         QCOMPARE(parseWlanIp(QStringLiteral("24: wlan0    inet 192.168.100.13/24 brd 192.168.100.255 scope global wlan0")), QStringLiteral("192.168.100.13"));
         QCOMPARE(parseWlanIp(QStringLiteral("wlan0     Link encap:Ethernet\n          inet addr:192.168.1.7  Bcast:192.168.1.255  Mask:255.255.255.0")), QStringLiteral("192.168.1.7"));
+    }
+
+    void adbHandshake()
+    {
+        const QByteArray cnxn = farm::adb::adbConnectPacket();
+        QCOMPARE(cnxn.size(), 24 + 7);
+        QVERIFY(cnxn.startsWith("CNXN"));
+        // adbd answers AUTH (or CNXN / STLS) with the same header layout.
+        QVERIFY(farm::adb::isAdbHandshakeReply(cnxn));
+        QByteArray auth = cnxn.left(24);
+        auth.replace(0, 4, "AUTH");
+        auth.replace(20, 4, QByteArray("\xbe\xaa\xab\xb7", 4));    // ~"AUTH"
+        QVERIFY(farm::adb::isAdbHandshakeReply(auth));
+        QVERIFY(!farm::adb::isAdbHandshakeReply(cnxn.left(23)));
+        QVERIFY(!farm::adb::isAdbHandshakeReply(QByteArray("HTTP/1.1 400 Bad Request\r\n\r\n")));
+        QByteArray badMagic = cnxn;
+        badMagic[20] = 0;
+        QVERIFY(!farm::adb::isAdbHandshakeReply(badMagic));
     }
 
     void quoting()

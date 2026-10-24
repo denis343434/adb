@@ -408,7 +408,10 @@ bool Server::readInfo(VideoSocket *videoSocket, QString &deviceName, QSize &size
 void Server::startAcceptTimeoutTimer()
 {
     stopAcceptTimeoutTimer();
-    m_acceptTimeoutTimer = startTimer(1000);
+    // Farm change: upstream gave the device 1 s to start app_process and connect back;
+    // real phones (ColorOS, EMUI, Android 5-8) routinely need 1-3 s, so every start
+    // timed out and the farm looped through reconnects.
+    m_acceptTimeoutTimer = startTimer(10000);
 }
 
 void Server::stopAcceptTimeoutTimer()

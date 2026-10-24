@@ -295,17 +295,33 @@ void DeviceService::beginStart(const QString &id)
     if (s.normalizeResolution() && !m_normalized.contains(id)) {
         // Make every phone stream and accept control in the same coordinate space
         // (mixed native resolutions otherwise put broadcast taps in the wrong place).
-        const QString script = QStringLiteral("wm size %1 ; wm density %2").arg(s.normalizedSize(), s.normalizedDensity());
-        AdbExecutor::instance().shell(id, script, this, [this, id](const AdbResult &r) {
+        // Only the width is fixed: the height follows the phone's physical aspect ratio,
+        // because a fixed WxH on a taller screen letterboxes it (black bars on the phone).
+        const QString target = s.normalizedSize();
+        const QString density = s.normalizedDensity();
+        AdbExecutor::instance().shell(id, QStringLiteral("wm size"), this, [this, id, target, density](const AdbResult &probe) {
             if (!m_starting.contains(id)) {
                 return;    // cancelled meanwhile
             }
-            if (r.ok) {
-                m_normalized.insert(id);
-            } else {
-                FarmLog::instance().warning(QLatin1String(kComponent), QStringLiteral("resolution normalize failed: %1").arg(r.error), id);
+            const QString size = probe.ok ? adb::aspectPreservingWmSize(probe.stdOut, target) : QString();
+            if (size.isEmpty()) {
+                // Unknown physical size: leave the resolution alone rather than letterbox.
+                FarmLog::instance().warning(QLatin1String(kComponent), QStringLiteral("resolution normalize skipped: physical size unknown"), id);
+                launchCore(id);
+                return;
             }
-            launchCore(id);
+            const QString script = QStringLiteral("wm size %1 ; wm density %2").arg(size, density);
+            AdbExecutor::instance().shell(id, script, this, [this, id](const AdbResult &r) {
+                if (!m_starting.contains(id)) {
+                    return;    // cancelled meanwhile
+                }
+                if (r.ok) {
+                    m_normalized.insert(id);
+                } else {
+                    FarmLog::instance().warning(QLatin1String(kComponent), QStringLiteral("resolution normalize failed: %1").arg(r.error), id);
+                }
+                launchCore(id);
+            }, 8000);
         }, 8000);
     } else {
         launchCore(id);
@@ -332,7 +348,9 @@ void DeviceService::launchCore(const QString &id)
     params.bitRate = static_cast<quint32>(std::clamp(profile.bitRate, 200000, 50000000));
     params.maxFps = static_cast<quint32>(std::clamp(profile.maxFps, 1, 120));
     params.useReverse = true;
-    params.stayAwake = profile.stayAwake;
+    // Some ROMs (ColorOS, MIUI) refuse the settings write behind scrcpy's stay_awake and the server dies;
+    // mirror/scrcpyStayAwake=false leaves staying awake to KeepAwakeManager alone.
+    params.stayAwake = profile.stayAwake && FarmSettings::instance().boolValue(QStringLiteral("mirror/scrcpyStayAwake"), true);
     params.renderExpiredFrames = false;    // latest-frame-wins
     params.scid = lease.scid;
     params.localPort = lease.localPort;

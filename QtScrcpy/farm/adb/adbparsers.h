@@ -87,6 +87,11 @@ QStringList parseArpNeighbours(const QString &stdOut);
 /// Parse `wm size` -> "1080x2220" (override size wins over physical).
 QString parseWmSize(const QString &stdOut);
 
+/// Width of `target` ("1080x2220") with the height taken from the PHYSICAL aspect ratio
+/// in `wm size` output, rounded to even -> "1080x2460". Empty if either is unparsable.
+/// A fixed WxH on a phone with another aspect letterboxes its screen (black bars).
+QString aspectPreservingWmSize(const QString &stdOut, const QString &target);
+
 /// Parse `df -k /data` style output -> free kilobytes, -1 if unknown.
 qint64 parseDfFreeKb(const QString &stdOut);
 
@@ -98,6 +103,14 @@ bool parseConnectSuccess(const QString &stdOut);
 
 /// Extract the wlan0 IPv4 from `ip -o addr` / `ifconfig wlan0`, empty if none.
 QString parseWlanIp(const QString &stdOut);
+
+/// The ADB wire-protocol CNXN packet `adb connect` opens with ("host::").
+QByteArray adbConnectPacket();
+
+/// True when `data` starts with a valid adbd packet header (CNXN / AUTH / STLS with
+/// a matching magic). A bare TCP accept proves nothing: TUN/fake-ip VPNs and
+/// transparent proxies accept every address, so the scanner requires this reply.
+bool isAdbHandshakeReply(const QByteArray &data);
 
 } // namespace adb
 } // namespace farm
