@@ -10,6 +10,7 @@ class QStackedWidget;
 class QLabel;
 class QLineEdit;
 class QProgressBar;
+class QPushButton;
 class QSystemTrayIcon;
 
 namespace farm {
@@ -53,6 +54,7 @@ private:
     void refreshCounters();
     void setupTray();
     void notify(const QString &title, const QString &message, bool warning);
+    void setAutoplay(bool on);
 
     QListWidget *m_nav = nullptr;
     QStackedWidget *m_stack = nullptr;
@@ -61,6 +63,7 @@ private:
     QLabel *m_counters = nullptr;
     QLabel *m_scanLabel = nullptr;
     QProgressBar *m_scanBar = nullptr;
+    QPushButton *m_autoplay = nullptr;
     QLabel *m_statusText = nullptr;
     QLabel *m_perfText = nullptr;
     QSystemTrayIcon *m_tray = nullptr;

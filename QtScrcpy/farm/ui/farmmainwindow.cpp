@@ -3,6 +3,8 @@
 #include <QKeySequence>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeyEvent>
@@ -17,6 +19,7 @@
 #include <QSystemTrayIcon>
 #include <QVBoxLayout>
 
+#include "automation/blockpuzzlebot.h"
 #include "core/activitylog.h"
 #include "core/appcontext.h"
 #include "core/batchjob.h"
@@ -290,9 +293,20 @@ QWidget *FarmMainWindow::buildTopBar()
     m_scanBar->setFixedWidth(140);
     m_scanBar->setTextVisible(false);
     m_scanBar->hide();
+    // BlockPuzzle autoplay bot on the selected (or all online) phones; see automation/blockpuzzlebot.h.
+    m_autoplay = new QPushButton(tr("▶ Autoplay"), bar);
+    m_autoplay->setCheckable(true);
+    m_autoplay->setToolTip(tr("Play BlockPuzzle on the selected devices (all online ones if none are selected). "
+                              "The bot reads the mirror stream and never watches ads."));
+    connect(m_autoplay, &QPushButton::clicked, this, &FarmMainWindow::setAutoplay);
+    connect(&BlockPuzzleAutoplay::instance(), &BlockPuzzleAutoplay::runningChanged, this, [this](bool running) {
+        m_autoplay->setChecked(running);
+        m_autoplay->setText(running ? tr("■ Stop autoplay") : tr("▶ Autoplay"));
+    });
     lay->addWidget(m_search);
     lay->addWidget(m_counters);
     lay->addStretch(1);
+    lay->addWidget(m_autoplay);
     lay->addWidget(m_scanLabel);
     lay->addWidget(m_scanBar);
     return bar;
@@ -354,6 +368,27 @@ void FarmMainWindow::notify(const QString &title, const QString &message, bool w
         return;
     }
     m_tray->showMessage(title, message, warning ? QSystemTrayIcon::Warning : QSystemTrayIcon::Information, 5000);
+}
+
+void FarmMainWindow::setAutoplay(bool on)
+{
+    BlockPuzzleAutoplay &autoplay = BlockPuzzleAutoplay::instance();
+    if (!on) {
+        autoplay.stop();
+        statusBar()->showMessage(tr("Autoplay stopped"), 5000);
+        return;
+    }
+    QStringList targets = m_devices->selectedIds();
+    if (targets.isEmpty()) {
+        targets = DeviceRegistry::instance().onlineIds();
+    }
+    const int started = targets.isEmpty() ? 0 : autoplay.start(targets);
+    if (started == 0) {
+        m_autoplay->setChecked(false);
+        QMessageBox::information(this, tr("Autoplay"), tr("No online devices."));
+        return;
+    }
+    statusBar()->showMessage(tr("Autoplay: BlockPuzzle bot on %1 device(s)").arg(started), 8000);
 }
 
 void FarmMainWindow::closeEvent(QCloseEvent *event)

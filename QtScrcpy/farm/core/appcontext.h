@@ -38,6 +38,7 @@ public:
         QString runWorkflow;
         QStringList workflowTargets;    // ids or "group:Name"
         int mockDevices = 0;
+        bool autoplay = false;          // start the BlockPuzzle bot (on --targets, or every online device)
         QString dataDir;
         bool noAutoMirror = false;
     };
