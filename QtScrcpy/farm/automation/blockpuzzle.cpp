@@ -465,8 +465,8 @@ QPoint findSkipAdButton(const Pix &p)
     const Blob *best = nullptr;
     int bestScore = 0;
     for (const Blob &blob : blobs) {
-        // Ad skip buttons are always on the right side of the screen.
-        if (blob.cx() < p.w * 0.70) {
+        // Ad skip buttons are always on the right side and never in the bottom banner.
+        if (blob.cx() < p.w * 0.70 || blob.cy() > p.h * 0.85) {
             continue;
         }
         const int w = blob.width();

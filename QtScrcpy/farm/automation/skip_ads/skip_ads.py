@@ -12,6 +12,7 @@ SCREENSHOTS_FOLDER = "screenshots"  # screenshots for --test mode
 THRESHOLD = 0.85                    # minimal match score for full-screen search
 THRESHOLD_ZONE = 0.68               # lower threshold for right-side zone only
 RIGHT_ZONE = 0.75                   # x fraction: right portion where skip/close buttons live
+MAX_TAP_Y = 0.85                    # never tap below this fraction — bottom banner is fixed
 WORK_WIDTH = 540                    # screenshots are downscaled to this width for speed
 SCALES = np.linspace(0.4, 2.5, 22)  # template sizes to try
 CHECK_INTERVAL = 1.0                # seconds between screenshots
@@ -83,6 +84,9 @@ def find_button(screenshot, templates):
 						best = (cx, cy, score)
 
 	if best is None:
+		return None
+	# Reject matches in the bottom banner area (it is always visible and should not be tapped).
+	if best[1] > screenshot.shape[0] * MAX_TAP_Y:
 		return None
 	return int(best[0]), int(best[1]), best[2]
 
