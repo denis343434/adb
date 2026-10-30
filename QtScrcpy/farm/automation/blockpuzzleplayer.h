@@ -5,6 +5,7 @@
 
 #include <QMutex>
 #include <QObject>
+#include <QProcess>
 #include <QStringList>
 
 #include "core/taskexecutor.h"
@@ -40,9 +41,13 @@ private:
     void publish(const QString &deviceId, const QString &text);
     void finishedOne();
 
+    void startAdScript();
+    void stopAdScript();
+
     std::atomic<int> m_active{0};
     CancellationToken m_token;
     QMutex m_mutex;
+    QProcess *m_adProcess = nullptr;
 };
 
 } // namespace farm

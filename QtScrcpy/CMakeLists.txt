@@ -369,6 +369,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.bat" "${QSC_BIN_OUTPUT_PATH}"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/sndcpy/sndcpy.apk" "${QSC_BIN_OUTPUT_PATH}"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/farm/automation/skip_ads"
+            "${QSC_BIN_OUTPUT_PATH}/skip_ads"
     )
 endif()
 

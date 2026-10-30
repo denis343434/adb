@@ -2,6 +2,9 @@
 
 #include <algorithm>
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QThread>
 
 #include "adb/adbexecutor.h"
@@ -102,6 +105,45 @@ BlockPuzzlePlayer::BlockPuzzlePlayer(QObject *parent)
 {
 }
 
+void BlockPuzzlePlayer::startAdScript()
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString scriptPath = QDir(appDir).filePath(QStringLiteral("skip_ads/skip_ads.py"));
+    if (!QFile::exists(scriptPath)) {
+        FarmLog::instance().warning(QStringLiteral("autoplay"),
+                                    QStringLiteral("skip_ads.py not found at %1 — ad script disabled").arg(scriptPath));
+        return;
+    }
+    m_adProcess = new QProcess(this);
+    m_adProcess->setWorkingDirectory(QDir(appDir).filePath(QStringLiteral("skip_ads")));
+    m_adProcess->start(QStringLiteral("python"), QStringList{ scriptPath });
+    if (!m_adProcess->waitForStarted(3000)) {
+        FarmLog::instance().warning(QStringLiteral("autoplay"),
+                                    QStringLiteral("Could not start skip_ads.py — python not found or script error"));
+        delete m_adProcess;
+        m_adProcess = nullptr;
+        return;
+    }
+    FarmLog::instance().info(QStringLiteral("autoplay"),
+                             QStringLiteral("Ad skip script started (pid %1)").arg(m_adProcess->processId()));
+    ActivityLog::instance().info(ActivityEntry::Automation,
+                                 QStringLiteral("Ad skip script started"));
+}
+
+void BlockPuzzlePlayer::stopAdScript()
+{
+    if (m_adProcess == nullptr) {
+        return;
+    }
+    m_adProcess->terminate();
+    if (!m_adProcess->waitForFinished(3000)) {
+        m_adProcess->kill();
+    }
+    FarmLog::instance().info(QStringLiteral("autoplay"), QStringLiteral("Ad skip script stopped"));
+    delete m_adProcess;
+    m_adProcess = nullptr;
+}
+
 void BlockPuzzlePlayer::start(const QStringList &deviceIds)
 {
     if (m_active.load() > 0) {
@@ -131,6 +173,7 @@ void BlockPuzzlePlayer::start(const QStringList &deviceIds)
                                  QStringLiteral("Autoplay started on %1 device(s): %2")
                                      .arg(ids.size())
                                      .arg(ids.join(QStringLiteral(", "))));
+    startAdScript();
     for (const QString &id : ids) {
         const bool queued = TaskExecutor::instance().run(QStringLiteral("automation"), [this, id, token]() {
             playDevice(id, token);
@@ -145,6 +188,7 @@ void BlockPuzzlePlayer::start(const QStringList &deviceIds)
 void BlockPuzzlePlayer::stop()
 {
     m_token.cancel();
+    stopAdScript();
     ActivityLog::instance().info(ActivityEntry::Automation, QStringLiteral("Autoplay stopping"));
 }
 
@@ -153,6 +197,7 @@ void BlockPuzzlePlayer::finishedOne()
     const int left = m_active.fetch_sub(1) - 1;
     if (left <= 0) {
         m_active.store(0);
+        stopAdScript();
         TaskExecutor::instance().setLaneConcurrency(QStringLiteral("automation"), 5);
         emit runningChanged(false);
         emit statusChanged(QString(), QStringLiteral("Autoplay stopped"));
