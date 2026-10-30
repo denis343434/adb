@@ -32,6 +32,7 @@ farm_add_test(tst_workflow)
 farm_add_test(tst_scheduler)
 farm_add_test(tst_imagematcher)
 farm_add_test(tst_uihierarchy)
+farm_add_test(tst_blockpuzzle)
 
 # The test binaries need the Qt runtime beside them: deploy once per build.
 add_custom_target(deploy_tests ALL
@@ -41,6 +42,6 @@ add_custom_target(deploy_tests ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/bin/${FARM_TEST_ARCH}/avutil-56.dll" "${FARM_TEST_OUTPUT}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/bin/${FARM_TEST_ARCH}/swscale-5.dll" "${FARM_TEST_OUTPUT}"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/QtScrcpy/QtScrcpyCore/src/third_party/ffmpeg/bin/${FARM_TEST_ARCH}/swresample-3.dll" "${FARM_TEST_OUTPUT}"
-    DEPENDS tst_ipv4 tst_adbparsers tst_allocator tst_database tst_registry tst_batchjob tst_expression tst_workflow tst_scheduler tst_imagematcher tst_uihierarchy
+    DEPENDS tst_ipv4 tst_adbparsers tst_allocator tst_database tst_registry tst_batchjob tst_expression tst_workflow tst_scheduler tst_imagematcher tst_uihierarchy tst_blockpuzzle
     COMMENT "Deploying Qt runtime for tests"
     VERBATIM)

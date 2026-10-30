@@ -66,6 +66,10 @@ set(FARMCORE_SOURCES
     automation/macrorecorder.cpp
     automation/aiprovider.h
     automation/aiprovider.cpp
+    automation/blockpuzzle.h
+    automation/blockpuzzle.cpp
+    automation/blockpuzzleplayer.h
+    automation/blockpuzzleplayer.cpp
     scheduler/scheduler.h
     scheduler/scheduler.cpp
 )

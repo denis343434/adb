@@ -166,20 +166,35 @@ void DeviceDiscoveryService::onQuickRefreshResult(const QList<adb::AdbDeviceInfo
     }
     for (const QString &id : m_onlineIds) {
         if (!nowOnline.contains(id)) {
-            FarmLog::instance().info(QLatin1String(kComponent), QStringLiteral("device no longer listed by adb"), id);
-            if (registry.contains(id)) {
-                const DeviceRecord r = registry.get(id);
-                bool listed = false;
-                for (const adb::AdbDeviceInfo &info : devices) {
-                    if (info.serial == id) {
-                        listed = true;
-                    }
-                }
-                if (!listed && r.state != DeviceState::Reconnecting) {
-                    registry.setState(id, DeviceState::Offline);
+            bool listed = false;
+            for (const adb::AdbDeviceInfo &info : devices) {
+                if (info.serial == id) {
+                    listed = true;
+                    break;
                 }
             }
-            emit deviceDisappeared(id);
+            if (listed) {
+                // Device is in `adb devices` but not in "device" state (e.g. "offline").
+                // This is typically a transient blip; do not tear down a live mirror — scrcpy
+                // will detect a real stream drop on its own. Only log and update state.
+                FarmLog::instance().info(QLatin1String(kComponent), QStringLiteral("device degraded state (still listed)"), id);
+                if (registry.contains(id)) {
+                    const DeviceRecord r = registry.get(id);
+                    if (r.state != DeviceState::Reconnecting && r.state != DeviceState::Mirroring
+                        && r.state != DeviceState::Connecting) {
+                        registry.setState(id, DeviceState::Offline);
+                    }
+                }
+            } else {
+                FarmLog::instance().info(QLatin1String(kComponent), QStringLiteral("device no longer listed by adb"), id);
+                if (registry.contains(id)) {
+                    const DeviceRecord r = registry.get(id);
+                    if (r.state != DeviceState::Reconnecting) {
+                        registry.setState(id, DeviceState::Offline);
+                    }
+                }
+                emit deviceDisappeared(id);
+            }
         }
     }
     m_onlineIds = nowOnline;

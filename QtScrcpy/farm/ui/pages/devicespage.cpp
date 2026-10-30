@@ -39,6 +39,7 @@
 #include <lunasvg.h>
 
 #include "adb/adbexecutor.h"
+#include "automation/blockpuzzleplayer.h"
 #include "core/activitylog.h"
 #include "core/appcontext.h"
 #include "core/farmsettings.h"
@@ -95,6 +96,15 @@ DevicesPage::DevicesPage(QWidget *parent)
     body->addWidget(buildSidePanel(), 0);
     body->addWidget(center, 1);
     root->addLayout(body, 1);
+
+    connect(&BlockPuzzlePlayer::instance(), &BlockPuzzlePlayer::runningChanged, this, [this](bool on) {
+        const QString label = on ? tr("Stop autoplay") : tr("Autoplay");
+        m_autoplayBtn->setText(label);
+        m_autoplaySide->setText(label);
+    });
+    connect(&BlockPuzzlePlayer::instance(), &BlockPuzzlePlayer::statusChanged, this, [this](const QString &, const QString &text) {
+        m_statusLabel->setText(text);
+    });
 
     // ---- data wiring ----
     DeviceRegistry &registry = DeviceRegistry::instance();
@@ -293,6 +303,10 @@ QWidget *DevicesPage::buildToolbar()
         }
     });
 
+    m_autoplayBtn = theme::button(tr("Autoplay"), bar, QStringLiteral("primary"));
+    m_autoplayBtn->setToolTip(tr("Launch Block Puzzle and play it on every online device."));
+    connect(m_autoplayBtn, &QPushButton::clicked, this, &DevicesPage::toggleAutoplay);
+
     auto *scanBtn = theme::button(tr("Scan LAN"), bar);
     scanBtn->setToolTip(tr("Probe the configured subnet for ADB devices now"));
     connect(scanBtn, &QPushButton::clicked, this, []() {
@@ -329,6 +343,7 @@ QWidget *DevicesPage::buildToolbar()
     lay->addWidget(m_sortCombo);
     lay->addWidget(m_densityCombo);
     lay->addWidget(m_viewToggle);
+    lay->addWidget(m_autoplayBtn);
     lay->addWidget(scanBtn);
     lay->addWidget(mirrorAllBtn);
     lay->addWidget(stopAllBtn);
@@ -416,6 +431,13 @@ QWidget *DevicesPage::buildSidePanel()
     col->addWidget(moreSel);
 
     col->addWidget(theme::sectionTitle(tr("Actions on selection"), panel));
+    m_autoplaySide = theme::button(tr("Autoplay"), panel, QStringLiteral("primary"));
+    m_autoplaySide->setToolTip(tr("Launch Block Puzzle and play it on every online device."));
+    connect(m_autoplaySide, &QPushButton::clicked, this, &DevicesPage::toggleAutoplay);
+    col->addWidget(m_autoplaySide);
+    m_statusLabel = theme::hint(tr("Ready."), panel);
+    m_statusLabel->setWordWrap(true);
+    col->addWidget(m_statusLabel);
     auto action = [&](const QString &label, std::function<void(const QStringList &)> fn, const QString &role = QString()) {
         auto *b = theme::button(label, panel, role);
         connect(b, &QPushButton::clicked, this, [this, fn]() {
@@ -551,8 +573,6 @@ QWidget *DevicesPage::buildSidePanel()
     col->addWidget(enableWifi);
 
     col->addStretch(1);
-    m_statusLabel = theme::hint(tr("Ready."), panel);
-    col->addWidget(m_statusLabel);
 
     auto *scroll = new QScrollArea(this);
     scroll->setWidgetResizable(true);
@@ -1046,6 +1066,12 @@ void DevicesPage::showContextMenu(const QString &clicked, const QPoint &globalPo
     menu.addAction(tr("Files…"), this, [this, ids]() { emit filesRequested(ids); });
     menu.addAction(tr("ADB console") + suffix, this, [this, ids]() { emit consoleRequested(ids); });
     menu.addAction(tr("Run automation…") + suffix, this, [this, ids]() { emit automationRequested(ids); });
+    menu.addAction(tr("Autoplay") + suffix, this, [this, ids]() {
+        if (!BlockPuzzlePlayer::instance().running()) {
+            selectIds(ids);
+        }
+        toggleAutoplay();
+    });
     menu.addSeparator();
     QMenu *power = menu.addMenu(tr("Keep awake / power"));
     power->addAction(tr("Apply keep-awake policy"), this, [this, ids]() { actKeepAwake(ids, true); });
@@ -1068,6 +1094,26 @@ void DevicesPage::showContextMenu(const QString &clicked, const QPoint &globalPo
 }
 
 // ---------------------------------------------------------------- actions
+
+void DevicesPage::toggleAutoplay()
+{
+    if (BlockPuzzlePlayer::instance().running()) {
+        BlockPuzzlePlayer::instance().stop();
+        m_statusLabel->setText(tr("Stopping autoplay…"));
+        return;
+    }
+    if (AppContext::instance().isMock()) {
+        m_statusLabel->setText(tr("Autoplay needs a real device."));
+        return;
+    }
+    const QStringList ids = DeviceRegistry::instance().onlineIds();
+    if (ids.isEmpty()) {
+        m_statusLabel->setText(tr("No device is online."));
+        return;
+    }
+    BlockPuzzlePlayer::instance().start(ids);
+    m_statusLabel->setText(tr("Autoplay started on %n device(s).", nullptr, static_cast<int>(ids.size())));
+}
 
 void DevicesPage::actMirror(const QStringList &ids)
 {

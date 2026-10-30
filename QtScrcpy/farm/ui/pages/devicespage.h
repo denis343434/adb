@@ -108,6 +108,7 @@ private:
     void actDisconnect(const QStringList &ids);
     void actForget(const QStringList &ids);
     void actNormalizeReset(const QStringList &ids);
+    void toggleAutoplay();
 
     DeviceGrid *m_grid = nullptr;
     FocusPanel *m_focus = nullptr;
@@ -132,6 +133,8 @@ private:
     QComboBox *m_sortCombo = nullptr;
     QComboBox *m_densityCombo = nullptr;
     QPushButton *m_viewToggle = nullptr;
+    QPushButton *m_autoplayBtn = nullptr;
+    QPushButton *m_autoplaySide = nullptr;
     QLabel *m_countLabel = nullptr;
     QLabel *m_selectionLabel = nullptr;
     QLabel *m_statusLabel = nullptr;

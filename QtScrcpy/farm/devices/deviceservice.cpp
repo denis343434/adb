@@ -627,7 +627,12 @@ void DeviceService::onDeviceDisappeared(const QString &id)
         FarmLog::instance().warning(QLatin1String(kComponent), QStringLiteral("device vanished from adb while mirroring; tearing down"), id);
         qsc::IDeviceManage::getInstance().disconnectDevice(id);
     } else if (m_wanted.contains(id) && !m_operatorStopped.contains(id) && FarmSettings::instance().autoReconnect()) {
-        scheduleReconnect(id);
+        // Only kick off a new reconnect if one is not already waiting; repeated
+        // deviceDisappeared calls (quickRefresh every 4 s) must not reset the backoff.
+        const QTimer *t = m_reconnectTimers.value(id, nullptr);
+        if (!t || !t->isActive()) {
+            scheduleReconnect(id);
+        }
     }
 }
 
