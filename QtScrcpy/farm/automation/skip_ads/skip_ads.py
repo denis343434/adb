@@ -9,7 +9,9 @@ import numpy as np
 
 BUTTONS_FOLDER = "buttons"          # button samples (crops), any size
 SCREENSHOTS_FOLDER = "screenshots"  # screenshots for --test mode
-THRESHOLD = 0.85                    # minimal match score (0..1)
+THRESHOLD = 0.85                    # minimal match score for full-screen search
+THRESHOLD_ZONE = 0.68               # lower threshold for right-side zone only
+RIGHT_ZONE = 0.75                   # x fraction: right portion where skip/close buttons live
 WORK_WIDTH = 540                    # screenshots are downscaled to this width for speed
 SCALES = np.linspace(0.4, 2.5, 22)  # template sizes to try
 CHECK_INTERVAL = 1.0                # seconds between screenshots
@@ -46,21 +48,41 @@ def find_button(screenshot, templates):
 	factor = WORK_WIDTH / screenshot.shape[1]
 	gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
 	gray = cv2.resize(gray, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA)
+	sh, sw = gray.shape
+
+	# Right zone: skip/close buttons always live here
+	x_zone = int(sw * RIGHT_ZONE)
+	gray_zone = gray[:, x_zone:]
 
 	best = None
 	for _, template in templates:
 		for scale in SCALES:
 			resized = cv2.resize(template, None, fx=scale, fy=scale)
 			h, w = resized.shape
-			if h > gray.shape[0] or w > gray.shape[1] or min(h, w) < 8:
+			if min(h, w) < 5:
 				continue
 
-			result = cv2.matchTemplate(gray, resized, cv2.TM_CCOEFF_NORMED)
-			_, score, _, (x, y) = cv2.minMaxLoc(result)
-			if best is None or score > best[2]:
-				best = ((x + w / 2) / factor, (y + h / 2) / factor, score)
+			# Full-screen search at high threshold
+			if h <= sh and w <= sw:
+				result = cv2.matchTemplate(gray, resized, cv2.TM_CCOEFF_NORMED)
+				_, score, _, (x, y) = cv2.minMaxLoc(result)
+				if score >= THRESHOLD:
+					cx = (x + w / 2) / factor
+					cy = (y + h / 2) / factor
+					if best is None or score > best[2]:
+						best = (cx, cy, score)
 
-	if best is None or best[2] < THRESHOLD:
+			# Right-zone search at lower threshold (catches style variations)
+			if h <= gray_zone.shape[0] and w <= gray_zone.shape[1]:
+				result = cv2.matchTemplate(gray_zone, resized, cv2.TM_CCOEFF_NORMED)
+				_, score, _, (x, y) = cv2.minMaxLoc(result)
+				if score >= THRESHOLD_ZONE:
+					cx = (x_zone + x + w / 2) / factor
+					cy = (y + h / 2) / factor
+					if best is None or score > best[2]:
+						best = (cx, cy, score)
+
+	if best is None:
 		return None
 	return int(best[0]), int(best[1]), best[2]
 
