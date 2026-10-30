@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QScopeGuard>
 #include <QThread>
 
 #include "adb/adbexecutor.h"
@@ -107,6 +108,9 @@ BlockPuzzlePlayer::BlockPuzzlePlayer(QObject *parent)
 
 void BlockPuzzlePlayer::startAdScript()
 {
+    if (m_adProcess != nullptr) {
+        return; // already running
+    }
     const QString appDir = QCoreApplication::applicationDirPath();
     const QString scriptPath = QDir(appDir).filePath(QStringLiteral("skip_ads/skip_ads.py"));
     if (!QFile::exists(scriptPath)) {
@@ -160,6 +164,7 @@ void BlockPuzzlePlayer::start(const QStringList &deviceIds)
     }
     m_token = CancellationToken();
     const CancellationToken token = m_token;
+    m_adScriptUsers.store(0);
     const int needed = static_cast<int>(ids.size());
     m_active.store(needed);
     // Each worker holds its thread for the entire session (infinite loop), so
@@ -173,7 +178,6 @@ void BlockPuzzlePlayer::start(const QStringList &deviceIds)
                                  QStringLiteral("Autoplay started on %1 device(s): %2")
                                      .arg(ids.size())
                                      .arg(ids.join(QStringLiteral(", "))));
-    startAdScript();
     for (const QString &id : ids) {
         const bool queued = TaskExecutor::instance().run(QStringLiteral("automation"), [this, id, token]() {
             playDevice(id, token);
@@ -259,8 +263,15 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
     int buttonTaps = 0;
     int stalls = 0;
     bool waitingForLand = false;
+    bool inAdPhase = false; // true while this device has no board (ad or transition)
     QString lastSeen;
     QVector<PuzzleMove> rejected;
+    // Release this device's claim on the ad script when the worker exits for any reason.
+    auto adPhaseCleanup = qScopeGuard([this, &inAdPhase]() {
+        if (inAdPhase && m_adScriptUsers.fetch_sub(1) == 1) {
+            QMetaObject::invokeMethod(this, [this]() { stopAdScript(); }, Qt::QueuedConnection);
+        }
+    });
     // A short drag still lands on this game. A drag that misses is retried slower.
     int swipeMs = 700;
     while (!token.isCancelled()) {
@@ -305,6 +316,13 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
         buttonTaps = 0;
 
         if (!scene.boardFound) {
+            // Start ad script on first frame without a board.
+            if (!inAdPhase) {
+                inAdPhase = true;
+                if (m_adScriptUsers.fetch_add(1) == 0) {
+                    QMetaObject::invokeMethod(this, [this]() { startAdScript(); }, Qt::QueuedConnection);
+                }
+            }
             // Between game-over and the next round there may be ads (interstitials,
             // video overlays, reward screens) that have no detectable button.
             // We periodically tap the center of the screen to advance past them.
@@ -330,6 +348,13 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
             continue;
         }
         noBoardMs = 0;
+        // Board is back — stop ad script if this was the last device in ad phase.
+        if (inAdPhase) {
+            inAdPhase = false;
+            if (m_adScriptUsers.fetch_sub(1) == 1) {
+                QMetaObject::invokeMethod(this, [this]() { stopAdScript(); }, Qt::QueuedConnection);
+            }
+        }
 
         if (scene.pieces.isEmpty()) {
             if (!waitMs(100, token)) {

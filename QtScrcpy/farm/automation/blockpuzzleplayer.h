@@ -45,6 +45,7 @@ private:
     void stopAdScript();
 
     std::atomic<int> m_active{0};
+    std::atomic<int> m_adScriptUsers{0}; // devices currently in ad phase
     CancellationToken m_token;
     QMutex m_mutex;
     QProcess *m_adProcess = nullptr;
