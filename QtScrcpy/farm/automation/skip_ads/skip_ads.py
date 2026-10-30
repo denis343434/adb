@@ -55,33 +55,23 @@ def find_button(screenshot, templates):
 	x_zone = int(sw * RIGHT_ZONE)
 	gray_zone = gray[:, x_zone:]
 
+	# Search only in the right zone — skip/close buttons are always there.
+	# Full-screen search is intentionally omitted: it causes false positives
+	# on game UI elements (notification badges, icons) that look like templates.
 	best = None
 	for _, template in templates:
 		for scale in SCALES:
 			resized = cv2.resize(template, None, fx=scale, fy=scale)
 			h, w = resized.shape
-			if min(h, w) < 5:
+			if min(h, w) < 5 or h > gray_zone.shape[0] or w > gray_zone.shape[1]:
 				continue
-
-			# Full-screen search at high threshold
-			if h <= sh and w <= sw:
-				result = cv2.matchTemplate(gray, resized, cv2.TM_CCOEFF_NORMED)
-				_, score, _, (x, y) = cv2.minMaxLoc(result)
-				if score >= THRESHOLD:
-					cx = (x + w / 2) / factor
-					cy = (y + h / 2) / factor
-					if best is None or score > best[2]:
-						best = (cx, cy, score)
-
-			# Right-zone search at lower threshold (catches style variations)
-			if h <= gray_zone.shape[0] and w <= gray_zone.shape[1]:
-				result = cv2.matchTemplate(gray_zone, resized, cv2.TM_CCOEFF_NORMED)
-				_, score, _, (x, y) = cv2.minMaxLoc(result)
-				if score >= THRESHOLD_ZONE:
-					cx = (x_zone + x + w / 2) / factor
-					cy = (y + h / 2) / factor
-					if best is None or score > best[2]:
-						best = (cx, cy, score)
+			result = cv2.matchTemplate(gray_zone, resized, cv2.TM_CCOEFF_NORMED)
+			_, score, _, (x, y) = cv2.minMaxLoc(result)
+			if score >= THRESHOLD_ZONE:
+				cx = (x_zone + x + w / 2) / factor
+				cy = (y + h / 2) / factor
+				if best is None or score > best[2]:
+					best = (cx, cy, score)
 
 	if best is None:
 		return None
