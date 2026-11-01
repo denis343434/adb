@@ -430,6 +430,7 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
     qint64 lastOcrOkMs = 0;
     qint64 lastFocusMs = 0;
     int focusMisses = 0;
+    bool returnedWithBack = false;   // Back already tried against a click-through
     bool adSeen = false;      // last OCR result
     bool gameOverSeen = false;
     qint64 boardFullMs = 0;   // when the board was last seen full (game over)
@@ -467,6 +468,10 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
     qint64 lastAdReportMs = 0;
     bool adShotSaved = false;
     bool adControlSeen = false;   // the last search found a control
+    // The control seen on the previous frame: a tap waits until the same crop
+    // matches at the same place once more (see tapAdButton).
+    QString pendingAdName;
+    QPoint pendingAdCenter;
     const auto tapAdButton = [&](const QImage &shot, qint64 now) -> bool {
         if (adTaps >= 10 || now - lastAdScanMs < 350) {
             return false;
@@ -479,8 +484,20 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
         adProbeName = probeName;
         adControlSeen = hit.ok();
         if (!hit.ok()) {
+            pendingAdName.clear();
             return false;
         }
+        // One frame is not proof. A photo fragment or a run of ad text can
+        // correlate with a glyph crop by chance, and a tap on the creative opens
+        // the advertiser's page in the browser — which costs the run. The same
+        // control must be found twice in a row, at the same place, before it is
+        // touched; a real Skip/Close does not move between two frames.
+        if (hit.name != pendingAdName || (hit.rect.center() - pendingAdCenter).manhattanLength() > 24) {
+            pendingAdName = hit.name;
+            pendingAdCenter = hit.rect.center();
+            return false;
+        }
+        pendingAdName.clear();
         const bool sameControl = hit.name == lastAdTapName
                                  && (hit.rect.center() - lastAdTapRect.center()).manhattanLength() < 40;
         if (sameControl && now < nextAdTapMs) {
@@ -579,6 +596,7 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
                 nextAdTapMs = 0;
                 adShotSaved = false;
                 adControlSeen = false;
+                pendingAdName.clear();
                 adProbeScore = 0.0;
                 adProbeName.clear();
                 publish(deviceId, QStringLiteral("Ad started — looking for its Skip button"));
@@ -644,6 +662,19 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
                         ++focusMisses;
                     } else {
                         focusMisses = 0;
+                        returnedWithBack = false;
+                    }
+                }
+                // The first sign of a click-through (the store, the browser, the
+                // advertiser's page) is answered with Back: it comes back to the ad
+                // or the game, while a relaunch costs the run. Only a second miss
+                // means Back did not help.
+                if (focusMisses == 1 && !returnedWithBack) {
+                    returnedWithBack = true;
+                    publish(deviceId, QStringLiteral("Ad opened another app — pressing Back"));
+                    shell(deviceId, QStringLiteral("input keyevent KEYCODE_BACK"), 8000, token);
+                    if (!waitMs(900, token)) {
+                        return;
                     }
                 }
                 if (focusMisses >= 2) {
@@ -652,6 +683,7 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
                                                     QStringLiteral("Autoplay relaunching: the ad left the game"), deviceId);
                     shell(deviceId, launch, 20000, token);
                     focusMisses = 0;
+                    returnedWithBack = false;
                     adPlaying = false;
                     quietMs = 0;
                     lastOcrMs = 0;
@@ -672,6 +704,7 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
             adTaps = 0;
             adShotSaved = false;
             adControlSeen = false;
+            pendingAdName.clear();
             publish(deviceId, QStringLiteral("Ad finished — resuming"));
             ActivityLog::instance().info(ActivityEntry::Automation,
                                          QStringLiteral("Autoplay resumed after the ad"), deviceId);
@@ -900,6 +933,17 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
                 ++focusMisses;
             } else {
                 focusMisses = 0;
+                returnedWithBack = false;
+            }
+        }
+        // A click-through is undone with Back first; only a second miss, where Back
+        // did not help, is worth relaunching the game for.
+        if (focusMisses == 1 && !returnedWithBack) {
+            returnedWithBack = true;
+            publish(deviceId, QStringLiteral("Game is not in front — pressing Back"));
+            shell(deviceId, QStringLiteral("input keyevent KEYCODE_BACK"), 8000, token);
+            if (!waitMs(900, token)) {
+                return;
             }
         }
         if (focusMisses >= 2) {
@@ -908,6 +952,7 @@ void BlockPuzzlePlayer::playDevice(const QString &deviceId, CancellationToken to
                                             QStringLiteral("Autoplay relaunching: the game left the foreground"), deviceId);
             shell(deviceId, launch, 20000, token);
             focusMisses = 0;
+            returnedWithBack = false;
             quietMs = 0;
             lastOcrMs = 0;
             lastSeen.clear();

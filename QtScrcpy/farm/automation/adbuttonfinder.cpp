@@ -18,6 +18,9 @@ constexpr int kMinSide = 8;          // smallest glyph worth matching, in work p
 constexpr int kGlyphMargin = 2;      // flat border kept around the trimmed glyph
 constexpr int kFlatDelta = 30;       // grey difference a flat background may have
 constexpr int kMinGlyphPixels = 12;  // fewer lit pixels than this is noise, not a button
+// A real Skip/Close control is ~30..80 px on a phone; a peak that only fits in a
+// dozen pixels is grain in a photo or a gap between letters, not a button.
+constexpr int kMinHitSide = 12;
 
 // Skip buttons are generic enough to need a high bar; a Close cross is even
 // easier to confuse with game art.
@@ -228,13 +231,47 @@ QImage cropGlyph(const QImage &source)
 QVector<Band> bandsFor(int w, int h)
 {
     QVector<Band> bands;
-    // Top-right corner: the skip counter and the ">|" / "x" controls.
-    bands.append(Band{ w * 68 / 100, 0, w, h * 32 / 100 });
-    // Bottom-right strip, from below the board down to just above the permanent
-    // in-game banner (bottom 15%): below that the phone's own system overlays
-    // (navigation, accessibility bubble) have icons that look like a Close.
-    bands.append(Band{ w * 60 / 100, h * 40 / 100, w, h * 85 / 100 });
+    // Ad chrome lives in the corners, not "somewhere on the right": the skip
+    // counter and the ">|" / "x" controls sit at the top-right, the Close cross or
+    // the Skip pill of an end card in the bottom-right, above the permanent
+    // in-game banner (bottom 14%). Anything further in is creative — a tap there
+    // is a click-through that opens the advertiser's page in the browser.
+    bands.append(Band{ w * 80 / 100, 0, w, h * 18 / 100 });
+    bands.append(Band{ w * 80 / 100, h * 40 / 100, w, h * 86 / 100 });
     return bands;
+}
+
+// A real Skip/Close control sits on flat ad chrome, just like the crop it is
+// matched against (see cropGlyph). A photo fragment, a window frame or a run of
+// text correlates with a small glyph by chance, and the pixels around it are busy
+// rather than one flat colour.
+bool flatChromeAt(const GrayImage &gray, int x, int y, int w, int h)
+{
+    if (w < 6 || h < 6 || x < 0 || y < 0 || x + w > gray.w || y + h > gray.h) {
+        return false;
+    }
+    std::vector<int> border;
+    border.reserve(static_cast<std::size_t>(2 * (w + h)));
+    for (int i = 0; i < w; ++i) {
+        border.push_back(static_cast<int>(gray.px[static_cast<std::size_t>(y) * gray.w + x + i]));
+        border.push_back(static_cast<int>(gray.px[static_cast<std::size_t>(y + h - 1) * gray.w + x + i]));
+    }
+    for (int j = 1; j + 1 < h; ++j) {
+        border.push_back(static_cast<int>(gray.px[static_cast<std::size_t>(y + j) * gray.w + x]));
+        border.push_back(static_cast<int>(gray.px[static_cast<std::size_t>(y + j) * gray.w + x + w - 1]));
+    }
+    if (border.empty()) {
+        return false;
+    }
+    std::nth_element(border.begin(), border.begin() + static_cast<std::ptrdiff_t>(border.size() / 2), border.end());
+    const int background = border[border.size() / 2];
+    int flat = 0;
+    for (int value : border) {
+        if (std::abs(value - background) <= kFlatDelta) {
+            ++flat;
+        }
+    }
+    return static_cast<long long>(flat) * 5 >= static_cast<long long>(border.size()) * 4;
 }
 
 // Fills the hit's centre and its box (in screenshot pixels). The autoplay taps a
@@ -334,6 +371,11 @@ AdButtonHit AdButtonFinder::find(const QImage &screenshot, double *candidateScor
             if (tw < kMinSide || th < kMinSide || tw >= gray.w || th >= gray.h) {
                 continue;
             }
+            // Below this size the correlation is dominated by grain: a window that
+            // small is never a phone-sized button, whatever it scores.
+            if (tw < kMinHitSide || th < kMinHitSide) {
+                continue;
+            }
             const Needle needle = makeNeedle(crop.image, tw, th);
             if (needle.norm <= 1e-6 || needle.w != tw || needle.h != th) {
                 continue;
@@ -387,6 +429,9 @@ AdButtonHit AdButtonFinder::find(const QImage &screenshot, double *candidateScor
                 if (bestScore < threshold || bestScore <= best.score) {
                     continue;
                 }
+                if (!flatChromeAt(gray, bestX, bestY, tw, th)) {
+                    continue;
+                }
                 best.score = bestScore;
                 best.name = crop.name;
                 best.close = crop.close;
@@ -410,7 +455,7 @@ AdButtonHit AdButtonFinder::find(const QImage &screenshot, double *candidateScor
                 const double scale = candidate.scale * multiplier;
                 const int tw = static_cast<int>(std::lround(static_cast<double>(candidate.crop->image.width()) * scale));
                 const int th = static_cast<int>(std::lround(static_cast<double>(candidate.crop->image.height()) * scale));
-                if (tw < kMinSide || th < kMinSide || tw >= gray.w || th >= gray.h) {
+                if (tw < kMinHitSide || th < kMinHitSide || tw >= gray.w || th >= gray.h) {
                     continue;
                 }
                 const Needle needle = makeNeedle(candidate.crop->image, tw, th);
@@ -433,6 +478,9 @@ AdButtonHit AdButtonFinder::find(const QImage &screenshot, double *candidateScor
                             top.y = y;
                         }
                         if (score < threshold || score <= best.score) {
+                            continue;
+                        }
+                        if (!flatChromeAt(gray, x, y, tw, th)) {
                             continue;
                         }
                         best.score = score;

@@ -45,6 +45,19 @@ QImage darkCanvas()
     return canvas;
 }
 
+/// A real control is ~30..80 px on a phone; a crop pasted at its own size puts a
+/// sub-phone-sized glyph on the canvas, which the finder deliberately ignores.
+constexpr double kPhoneScale = 1.8;
+
+/// Draws `crop` at phone size and returns the box it landed in.
+QRect drawControl(QImage &canvas, const QImage &crop, const QPoint &at)
+{
+    const QRect box(at, QSize(qRound(crop.width() * kPhoneScale), qRound(crop.height() * kPhoneScale)));
+    QPainter painter(&canvas);
+    painter.drawImage(box, crop);
+    return box;
+}
+
 } // namespace
 
 class TestAdButton : public QObject
@@ -91,18 +104,15 @@ private slots:
         QVERIFY(!crop.isNull());
 
         QImage canvas = darkCanvas();
-        {
-            QPainter painter(&canvas);
-            painter.drawImage(QPoint(600, 1180), crop);
-        }
+        const QRect box = drawControl(canvas, crop, QPoint(600, 1180));
 
         const AdButtonHit hit = AdButtonFinder::instance().find(canvas);
         QVERIFY2(hit.ok(), "the white-on-black Skip glyph was not found");
         QVERIFY(!hit.close);
         QVERIFY(hit.name.contains(QStringLiteral("skip_next")));
-        QVERIFY2(qAbs(hit.point.x() - (600 + crop.width() / 2)) <= 12,
+        QVERIFY2(qAbs(hit.point.x() - box.center().x()) <= 14,
                  qPrintable(QStringLiteral("x = %1").arg(hit.point.x())));
-        QVERIFY2(qAbs(hit.point.y() - (1180 + crop.height() / 2)) <= 12,
+        QVERIFY2(qAbs(hit.point.y() - box.center().y()) <= 14,
                  qPrintable(QStringLiteral("y = %1").arg(hit.point.y())));
     }
 
@@ -114,15 +124,16 @@ private slots:
 
         QImage canvas(720, 1600, QImage::Format_RGB32);
         canvas.fill(QColor(246, 246, 246));
-        {
-            QPainter painter(&canvas);
-            painter.drawImage(QPoint(620, 700), crop);
-        }
+        const QRect box = drawControl(canvas, crop, QPoint(620, 700));
 
         const AdButtonHit hit = AdButtonFinder::instance().find(canvas);
         QVERIFY2(hit.ok(), "the Close cross was not found");
         QVERIFY(hit.close);
         QVERIFY(hit.name.startsWith(QStringLiteral("close")));
+        QVERIFY2(qAbs(hit.point.x() - box.center().x()) <= 14,
+                 qPrintable(QStringLiteral("x = %1").arg(hit.point.x())));
+        QVERIFY2(qAbs(hit.point.y() - box.center().y()) <= 14,
+                 qPrintable(QStringLiteral("y = %1").arg(hit.point.y())));
     }
 
     void findsDarkCircleClose()
@@ -135,17 +146,14 @@ private slots:
         for (const QColor &background : { QColor(170, 170, 170), QColor(250, 250, 250) }) {
             QImage canvas(720, 1600, QImage::Format_RGB32);
             canvas.fill(background);
-            {
-                QPainter painter(&canvas);
-                painter.drawImage(QPoint(640, 110), crop);
-            }
+            const QRect box = drawControl(canvas, crop, QPoint(640, 110));
             const AdButtonHit hit = AdButtonFinder::instance().find(canvas);
             QVERIFY2(hit.ok(), qPrintable(QStringLiteral("the round Close badge was not found on %1").arg(background.name())));
             QVERIFY(hit.close);
             QVERIFY(hit.name.startsWith(QStringLiteral("close")));
-            QVERIFY2(qAbs(hit.point.x() - (640 + crop.width() / 2)) <= 14,
+            QVERIFY2(qAbs(hit.point.x() - box.center().x()) <= 16,
                      qPrintable(QStringLiteral("x = %1").arg(hit.point.x())));
-            QVERIFY2(qAbs(hit.point.y() - (110 + crop.height() / 2)) <= 14,
+            QVERIFY2(qAbs(hit.point.y() - box.center().y()) <= 16,
                      qPrintable(QStringLiteral("y = %1").arg(hit.point.y())));
         }
     }
@@ -160,16 +168,13 @@ private slots:
 
         QImage canvas(720, 1600, QImage::Format_RGB32);
         canvas.fill(QColor(68, 69, 118));
-        {
-            QPainter painter(&canvas);
-            painter.drawImage(QPoint(650, 110), crop);
-        }
+        const QRect box = drawControl(canvas, crop, QPoint(650, 110));
 
         const AdButtonHit hit = AdButtonFinder::instance().find(canvas);
         QVERIFY2(hit.ok(), "the round Close badge on the dark blue ad was not found");
         QVERIFY(hit.close);
-        QVERIFY2(qAbs(hit.point.x() - 663) <= 14, qPrintable(QStringLiteral("x = %1").arg(hit.point.x())));
-        QVERIFY2(qAbs(hit.point.y() - 122) <= 14, qPrintable(QStringLiteral("y = %1").arg(hit.point.y())));
+        QVERIFY2(qAbs(hit.point.x() - box.center().x()) <= 16, qPrintable(QStringLiteral("x = %1").arg(hit.point.x())));
+        QVERIFY2(qAbs(hit.point.y() - box.center().y()) <= 16, qPrintable(QStringLiteral("y = %1").arg(hit.point.y())));
     }
 
     void sweepFolder()
@@ -211,6 +216,44 @@ private slots:
                                            .arg(hit.point.x())
                                            .arg(hit.point.y())
                                            .arg(hit.score)));
+    }
+
+    void ignoresClickbaitCreative()
+    {
+        // A full-screen ad with no Skip control at all: a photo of a building with
+        // white ad text under it. The finder matched a glyph crop inside the photo
+        // and in the text, the autoplay tapped the creative and the browser opened.
+        QVERIFY(AdButtonFinder::instance().loadFromDirectory(crops()) > 0);
+        const QImage ad(fixture(QStringLiteral("ad-clickbait-720.png")));
+        QVERIFY2(!ad.isNull(), "missing tests/fixtures/ad-clickbait-720.png");
+        const AdButtonHit hit = AdButtonFinder::instance().find(ad);
+        QVERIFY2(!hit.ok(), qPrintable(QStringLiteral("false positive %1 at %2,%3 (%4)")
+                                           .arg(hit.name)
+                                           .arg(hit.point.x())
+                                           .arg(hit.point.y())
+                                           .arg(hit.score)));
+    }
+
+    void ignoresCreativeOutsideTheCorners()
+    {
+        // A glyph 70% across and a fifth of the way down sits in the creative: a
+        // tap there is a click-through that opens the advertiser's page, so only
+        // the two corners are searched.
+        QVERIFY(AdButtonFinder::instance().loadFromDirectory(crops()) > 0);
+        const QImage ad(fixture(QStringLiteral("ad-clickbait-720.png")));
+        QVERIFY(!ad.isNull());
+        const QImage crop(QStringLiteral("%1/skip_light_alt.png").arg(crops()));
+        QVERIFY(!crop.isNull());
+
+        QImage canvas = ad;
+        {
+            QPainter painter(&canvas);
+            painter.drawImage(QPoint(500, 300), crop);
+        }
+        const AdButtonHit hit = AdButtonFinder::instance().find(canvas);
+        QVERIFY2(!hit.ok(), qPrintable(QStringLiteral("tapped the creative at %1,%2")
+                                           .arg(hit.point.x())
+                                           .arg(hit.point.y())));
     }
 
     void ignoresBlankScreen()

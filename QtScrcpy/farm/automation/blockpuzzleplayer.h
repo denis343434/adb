@@ -18,12 +18,15 @@ namespace farm {
  *
  * While a full-screen ad is showing the bot does not play, but it looks for the
  * ad's own Skip (">|") and Close ("x") controls on every frame and taps one when
- * a crop in skip_ads/buttons matches (see AdButtonFinder). A tap lands on a
- * random point inside the control, and consecutive taps are 2..5 s apart. Ads
- * without a control on screen are watched to the end, so a rewarded ad keeps its
- * reward; play resumes as soon as the game screen is readable again (playable
- * board, menu/claim button, or the game-over card). The only other action during
- * an ad is a Back key press after three minutes, for a stuck creative.
+ * a crop in skip_ads/buttons matches (see AdButtonFinder). A control has to be
+ * found twice in a row, and only in the corners where ad chrome lives, because a
+ * tap on the creative itself opens the advertiser's page in the browser. A tap
+ * lands on a random point inside the control, and consecutive taps are 2..5 s
+ * apart. Ads without a control on screen are watched to the end, so a rewarded ad
+ * keeps its reward; play resumes as soon as the game screen is readable again
+ * (playable board, menu/claim button, or the game-over card). If a tap does open
+ * another app, Back brings the game back before a relaunch is considered, and a
+ * creative that stays up for three minutes gets a Back key press as well.
  *
  * One worker per device on the automation lane. Touch is `input swipe`.
  */

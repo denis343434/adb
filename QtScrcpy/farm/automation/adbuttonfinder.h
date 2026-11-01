@@ -31,10 +31,14 @@ struct AdButtonHit
  * game's own art far more often than an ad button.
  *
  * Matching is normalised cross-correlation at a ladder of scales, restricted to
- * the two places ad chrome lives: the top-right corner and the bottom-right
- * strip above the permanent in-game banner. The coarse pass walks the zone in
- * steps and the best peak is then refined pixel by pixel, which keeps one
- * screenshot at a few dozen milliseconds on the automation lane.
+ * the two corners where ad chrome lives: the top-right corner (the skip counter
+ * and its ">|" / "x" control) and the bottom-right strip above the permanent
+ * in-game banner (the Close cross of an end card). A match is reported only when
+ * the window around it is flat chrome, like the crop itself — a photo fragment,
+ * a window frame or a run of text correlates with a small glyph by chance, and a
+ * tap on the creative click-throughs to the advertiser's page. The coarse pass
+ * walks the zone in steps and the best peak is then refined pixel by pixel, which
+ * keeps one screenshot at a few dozen milliseconds on the automation lane.
  */
 class AdButtonFinder
 {
