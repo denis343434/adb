@@ -68,6 +68,8 @@ set(FARMCORE_SOURCES
     automation/aiprovider.cpp
     automation/blockpuzzle.h
     automation/blockpuzzle.cpp
+    automation/adbuttonfinder.h
+    automation/adbuttonfinder.cpp
     automation/blockpuzzleplayer.h
     automation/blockpuzzleplayer.cpp
     scheduler/scheduler.h

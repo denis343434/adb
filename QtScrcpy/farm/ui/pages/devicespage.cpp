@@ -304,7 +304,7 @@ QWidget *DevicesPage::buildToolbar()
     });
 
     m_autoplayBtn = theme::button(tr("Autoplay"), bar, QStringLiteral("primary"));
-    m_autoplayBtn->setToolTip(tr("Launch Block Puzzle and play it on every online device."));
+    m_autoplayBtn->setToolTip(tr("Launch Block Puzzle on every online device: play it and tap the ad's Skip button."));
     connect(m_autoplayBtn, &QPushButton::clicked, this, &DevicesPage::toggleAutoplay);
 
     auto *scanBtn = theme::button(tr("Scan LAN"), bar);

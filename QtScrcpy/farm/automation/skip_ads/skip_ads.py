@@ -80,9 +80,12 @@ def find_button(screenshot, templates):
 		return None
 	return int(best[0]), int(best[1]), best[2]
 
-def get_devices(adb):
+def get_devices(adb, wanted=None):
 	output = subprocess.run([adb, "devices"], capture_output=True, text=True).stdout
-	return [line.split()[0] for line in output.splitlines()[1:] if line.endswith("\tdevice")]
+	devices = [line.split()[0] for line in output.splitlines()[1:] if line.endswith("\tdevice")]
+	if wanted:
+		devices = [device for device in devices if device in wanted]
+	return devices
 
 def take_screenshot(adb, device):
 	data = subprocess.run([adb, "-s", device, "exec-out", "screencap", "-p"], capture_output=True).stdout
@@ -93,13 +96,15 @@ def take_screenshot(adb, device):
 def tap(adb, device, x, y):
 	subprocess.run([adb, "-s", device, "shell", "input", "tap", str(x), str(y)])
 
-def run_on_devices(templates):
+def run_on_devices(templates, wanted=None):
 	adb = find_adb()
 	last_tap = {}
+	if wanted:
+		print(f"Реклама на устройствах: {', '.join(sorted(wanted))}")
 	print("Слежу за экранами телефонов. Остановить: Ctrl+C")
 
 	while True:
-		devices = get_devices(adb)
+		devices = get_devices(adb, wanted)
 		if not devices:
 			print("Телефоны не подключены, жду...")
 
@@ -107,16 +112,21 @@ def run_on_devices(templates):
 			if time.time() - last_tap.get(device, 0) < TAP_COOLDOWN:
 				continue
 
-			screenshot = take_screenshot(adb, device)
-			if screenshot is None:
-				continue
+			# Keep tapping while skip/close buttons stay on screen: some ads show
+			# two of them (a skip pill and a close cross) and need both.
+			for _ in range(3):
+				screenshot = take_screenshot(adb, device)
+				if screenshot is None:
+					break
 
-			found = find_button(screenshot, templates)
-			if found:
+				found = find_button(screenshot, templates)
+				if not found:
+					break
 				x, y, score = found
 				tap(adb, device, x, y)
 				last_tap[device] = time.time()
 				print(f"[{time.strftime('%H:%M:%S')}] {device}: нажал ({x}, {y}), совпадение {score:.2f}")
+				time.sleep(0.6)
 
 		time.sleep(CHECK_INTERVAL)
 
@@ -148,7 +158,13 @@ if __name__ == "__main__":
 	os.chdir(os.path.dirname(os.path.abspath(__file__)))
 	templates = load_templates()
 
+	wanted = None
+	if "--devices" in sys.argv:
+		index = sys.argv.index("--devices")
+		if index + 1 < len(sys.argv):
+			wanted = {name for name in sys.argv[index + 1].split(",") if name}
+
 	if "--test" in sys.argv:
 		run_test(templates)
 	else:
-		run_on_devices(templates)
+		run_on_devices(templates, wanted)

@@ -3,9 +3,7 @@
 
 #include <atomic>
 
-#include <QMutex>
 #include <QObject>
-#include <QProcess>
 #include <QStringList>
 
 #include "core/taskexecutor.h"
@@ -16,8 +14,16 @@ namespace farm {
  * Launches Block Puzzle on the selected phones and plays it from screenshots.
  * Intentionally picks the worst placement each turn (minimises GreedyBot score)
  * so the board fills up quickly and the game ends naturally. Play Again /
- * Claim / Resume buttons are tapped automatically; the bot loops until stopped.
- * The bottom ad banner is never tapped.
+ * Continue / Claim buttons are tapped automatically; the bot loops until stopped.
+ *
+ * While a full-screen ad is showing the bot does not play, but it looks for the
+ * ad's own Skip (">|") and Close ("x") controls on every frame and taps one when
+ * a crop in skip_ads/buttons matches (see AdButtonFinder). A tap lands on a
+ * random point inside the control, and consecutive taps are 2..5 s apart. Ads
+ * without a control on screen are watched to the end, so a rewarded ad keeps its
+ * reward; play resumes as soon as the game screen is readable again (playable
+ * board, menu/claim button, or the game-over card). The only other action during
+ * an ad is a Back key press after three minutes, for a stuck creative.
  *
  * One worker per device on the automation lane. Touch is `input swipe`.
  */
@@ -41,14 +47,8 @@ private:
     void publish(const QString &deviceId, const QString &text);
     void finishedOne();
 
-    void startAdScript();
-    void stopAdScript();
-
     std::atomic<int> m_active{0};
-    std::atomic<int> m_adScriptUsers{0}; // devices currently in ad phase
     CancellationToken m_token;
-    QMutex m_mutex;
-    QProcess *m_adProcess = nullptr;
 };
 
 } // namespace farm

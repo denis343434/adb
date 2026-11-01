@@ -79,17 +79,26 @@ struct Axis
     int contrast = 0;
 };
 
+// Counts the columns (rows) where the luma step is strong instead of summing its
+// magnitude: a grid line runs across the whole board, while text and icons only
+// cover a few pixels. Summing lets an ad banner or a big title outvote the board;
+// counting (or not) each column makes the board's long, regular lines win, which
+// is what the period search needs — also on a board that is still empty.
+constexpr int kEdgeStep = 14;
+
 QVector<int> rowEnergy(const Pix &p)
 {
     QVector<int> energy(p.h, 0);
     const int x0 = p.w / 10;
     const int x1 = p.w - p.w / 10;
     for (int y = 0; y < p.h - 1; ++y) {
-        int sum = 0;
+        int count = 0;
         for (int x = x0; x < x1; ++x) {
-            sum += std::abs(p.lumaAt(x, y) - p.lumaAt(x, y + 1));
+            if (std::abs(p.lumaAt(x, y) - p.lumaAt(x, y + 1)) > kEdgeStep) {
+                ++count;
+            }
         }
-        energy[y] = sum;
+        energy[y] = count;
     }
     return energy;
 }
@@ -103,11 +112,13 @@ QVector<int> colEnergy(const Pix &p, int y0, int y1)
         return energy;
     }
     for (int x = 0; x < p.w - 1; ++x) {
-        int sum = 0;
+        int count = 0;
         for (int y = y0; y < y1; ++y) {
-            sum += std::abs(p.lumaAt(x, y) - p.lumaAt(x + 1, y));
+            if (std::abs(p.lumaAt(x, y) - p.lumaAt(x + 1, y)) > kEdgeStep) {
+                ++count;
+            }
         }
-        energy[x] = sum;
+        energy[x] = count;
     }
     return energy;
 }
@@ -230,6 +241,18 @@ Axis interpret(const Pix &p, const QVector<int> &lines, bool rows)
         if (center.first() < 1.0 || center.last() > axisLength - 2.0) {
             return;
         }
+        // A block-puzzle board sits above the piece tray and the banner: its centre
+        // is in the upper half of the screen. Without this, the tray pieces and the
+        // ad banner below form their own regular lattice and win on contrast.
+        const double mid = (center.first() + center.last()) * 0.5;
+        if (rows) {
+            if (mid < p.h * 0.16 || mid > p.h * 0.62) {
+                return;
+            }
+        } else if (std::abs(mid - p.w * 0.5) > p.w * 0.12) {
+            // Boards are horizontally centred; the tray is not.
+            return;
+        }
         // Rounded cells hide the gap at their middle, and an even grid's midline is
         // itself a gap, so contrast is measured across the axis. A real board also has
         // a dark frame just outside the first and last cell; the mirror alignment
@@ -257,7 +280,12 @@ Axis interpret(const Pix &p, const QVector<int> &lines, bool rows)
             for (int line : lines) {
                 lineLuma += probeLuma(p, static_cast<double>(line), at, rows);
             }
-            const int sample = centerLuma / n - lineLuma / static_cast<int>(lines.size());
+            // A blue-theme cell is brighter than the gaps between cells, but on the
+            // dark theme the strongest edges are the bright bottom bevels of the
+            // cells, so the cell centres between them are darker than the lines.
+            // Either polarity is a real board; the flatness and frame checks below
+            // still reject menus and popup grids.
+            const int sample = std::abs(centerLuma / n - lineLuma / static_cast<int>(lines.size()));
             if (sample < 8) {
                 continue;
             }
@@ -334,15 +362,20 @@ Axis fitAxis(const Pix &p, const QVector<int> &energy, bool rows, QString *note,
         const QVector<int> run = strongRun(energy, candidate.period);
         const Axis axis = interpret(p, run, rows);
         if (note != nullptr) {
-            *note += QStringLiteral("  p=%1 score=%2 run=%3 n=%4 contrast=%5\n")
+            *note += QStringLiteral("  p=%1 score=%2 run=%3 n=%4 contrast=%5 pitch=%6\n")
                          .arg(candidate.period)
                          .arg(candidate.score)
                          .arg(run.size())
                          .arg(axis.n)
-                         .arg(axis.contrast);
+                         .arg(axis.contrast)
+                         .arg(axis.pitch);
         }
-        if (axis.ok && (!best.ok || axis.contrast > best.contrast)) {
+        // Take the strongest periodic signal that validates. Picking the highest
+        // contrast instead lets a near-miss period (a slightly wrong spacing that
+        // still finds eight lines) win on a noisy screen.
+        if (axis.ok) {
             best = axis;
+            break;
         }
     }
     return best;
@@ -374,6 +407,35 @@ QRgb averagePatch(const QImage &img, int cx, int cy, int radius)
         return qRgb(0, 0, 0);
     }
     return qRgb(static_cast<int>(red / count), static_cast<int>(green / count), static_cast<int>(blue / count));
+}
+
+/// Standard deviation of the luma in a square patch — flat blocks stay low,
+/// text and icons push it high.
+double patchSpread(const QImage &img, int cx, int cy, int radius)
+{
+    long sum = 0;
+    long sumSq = 0;
+    int count = 0;
+    for (int y = cy - radius; y <= cy + radius; ++y) {
+        if (y < 0 || y >= img.height()) {
+            continue;
+        }
+        const QRgb *line = reinterpret_cast<const QRgb *>(img.constScanLine(y));
+        for (int x = cx - radius; x <= cx + radius; ++x) {
+            if (x < 0 || x >= img.width()) {
+                continue;
+            }
+            const int luma = lumaOf(line[x]);
+            sum += luma;
+            sumSq += luma * luma;
+            ++count;
+        }
+    }
+    if (count == 0) {
+        return 0.0;
+    }
+    const double mean = static_cast<double>(sum) / count;
+    return std::sqrt(std::max(0.0, static_cast<double>(sumSq) / count - mean * mean));
 }
 
 struct Blob
@@ -446,115 +508,6 @@ bool isGreen(QRgb c)
     return green > 140 && green > red + 35 && green > blue + 35 && red < 190;
 }
 
-// ── Ad button detectors (called only when no game board is visible) ────────
-
-// ▶| Skip / Next — dark (luma<85) rectangle/pill with bright icon, always on the
-// right side of the screen (ad skip controls are right-aligned in Google/Yandex ads).
-QPoint findSkipAdButton(const Pix &p)
-{
-    const int side = std::min(p.w, p.h);
-    const int minSide = std::max(3, side / 28);   // ~4% of screen short side
-    const int maxSide = side / 5;                 // up to 20%
-
-    QVector<char> mask(p.w * p.h, 0);
-    for (int i = 0; i < p.lum.size(); ++i) {
-        mask[i] = (p.lum.at(i) < 85) ? 1 : 0;
-    }
-    const QVector<Blob> blobs = components(mask, p.w, p.h);
-
-    const Blob *best = nullptr;
-    int bestScore = 0;
-    for (const Blob &blob : blobs) {
-        // Ad skip buttons are always on the right side and never in the bottom banner.
-        if (blob.cx() < p.w * 0.70 || blob.cy() > p.h * 0.85) {
-            continue;
-        }
-        const int w = blob.width();
-        const int h = blob.height();
-        if (w < minSide || h < minSide || w > maxSide || h > maxSide) {
-            continue;
-        }
-        const double aspect = static_cast<double>(w) / std::max(1, h);
-        if (aspect < 0.3 || aspect > 4.5) {
-            continue;
-        }
-        // Must be a reasonably solid filled region
-        const double fill = static_cast<double>(blob.area) / (w * h);
-        if (fill < 0.38) {
-            continue;
-        }
-        // Must contain bright pixels (the white ▶| icon)
-        int bright = 0;
-        int total = 0;
-        for (int y = std::max(0, blob.minY); y <= std::min(p.h - 1, blob.maxY); ++y) {
-            for (int x = std::max(0, blob.minX); x <= std::min(p.w - 1, blob.maxX); ++x) {
-                if (p.lum.at(y * p.w + x) > 155) {
-                    ++bright;
-                }
-                ++total;
-            }
-        }
-        if (total == 0 || bright * 20 < total) { // ≥ 5% bright
-            continue;
-        }
-        const int score = bright;
-        if (score > bestScore) {
-            bestScore = score;
-            best = &blob;
-        }
-    }
-    if (best == nullptr) {
-        return QPoint();
-    }
-    return QPoint(static_cast<int>(std::lround(toFull(best->cx(), p.scale))),
-                  static_cast<int>(std::lround(toFull(best->cy(), p.scale))));
-}
-
-// ✕ Close / Dismiss — small dark cluster in the top-right corner of the screen.
-// Ad overlay close buttons (×) appear as dark symbols on a light background,
-// always in the upper-right area (x > 73%, y < 18%).
-QPoint findCloseAdButton(const Pix &p)
-{
-    const int side = std::min(p.w, p.h);
-    const int minSide = std::max(3, side / 32); // ~3%
-    const int maxSide = side / 9;               // up to 11%
-
-    // Only search the top-right corner.
-    const int xMin = p.w * 73 / 100;
-    const int yMax = p.h * 18 / 100;
-
-    QVector<char> mask(p.w * p.h, 0);
-    for (int y = 0; y < yMax; ++y) {
-        for (int x = xMin; x < p.w; ++x) {
-            mask[y * p.w + x] = (p.lum.at(y * p.w + x) < 100) ? 1 : 0;
-        }
-    }
-    const QVector<Blob> blobs = components(mask, p.w, p.h);
-
-    const Blob *best = nullptr;
-    int bestArea = 0;
-    for (const Blob &blob : blobs) {
-        const int w = blob.width();
-        const int h = blob.height();
-        if (w < minSide || h < minSide || w > maxSide || h > maxSide) {
-            continue;
-        }
-        const double aspect = static_cast<double>(w) / std::max(1, h);
-        if (aspect < 0.35 || aspect > 2.8) {
-            continue;
-        }
-        if (blob.area > bestArea) {
-            bestArea = blob.area;
-            best = &blob;
-        }
-    }
-    if (best == nullptr) {
-        return QPoint();
-    }
-    return QPoint(static_cast<int>(std::lround(toFull(best->cx(), p.scale))),
-                  static_cast<int>(std::lround(toFull(best->cy(), p.scale))));
-}
-
 // ── Game buttons ──────────────────────────────────────────────────────────
 
 // Large green banner button (Play Again / Claim / Resume) — wide and centered.
@@ -596,184 +549,6 @@ QPoint findGreenButton(const Pix &p)
                   static_cast<int>(std::lround(toFull(best->cy(), p.scale))));
 }
 
-// Small green play icon (image 6) — appears on game-over / reward screens.
-// Only called when no board is visible to avoid tapping game UI elements.
-QPoint findSmallGreenPlayButton(const Pix &p)
-{
-    QVector<char> mask(p.w * p.h, 0);
-    for (int i = 0; i < p.rgb.size(); ++i) {
-        mask[i] = isGreen(p.rgb.at(i)) ? 1 : 0;
-    }
-    const QVector<Blob> blobs = components(mask, p.w, p.h);
-    const int side = std::min(p.w, p.h);
-    const int minSide = side / 18;  // ~6% of short side
-    const int maxSide = side / 5;   // up to 20%
-    const Blob *best = nullptr;
-    int bestArea = 0;
-    for (const Blob &blob : blobs) {
-        const int w = blob.width();
-        const int h = blob.height();
-        // Explicitly exclude wide banners (those are caught by findGreenButton).
-        if (w >= p.w * 22 / 100) {
-            continue;
-        }
-        if (w < minSide || h < minSide || w > maxSide || h > maxSide) {
-            continue;
-        }
-        const double aspect = static_cast<double>(w) / std::max(1, h);
-        if (aspect < 0.45 || aspect > 2.2) {
-            continue;
-        }
-        if (static_cast<double>(blob.area) / (w * h) < 0.40) {
-            continue;
-        }
-        if (blob.area > bestArea) {
-            bestArea = blob.area;
-            best = &blob;
-        }
-    }
-    if (best == nullptr) {
-        return QPoint();
-    }
-    return QPoint(static_cast<int>(std::lround(toFull(best->cx(), p.scale))),
-                  static_cast<int>(std::lround(toFull(best->cy(), p.scale))));
-}
-
-QPoint findDarkCircleButton(const Pix &p)  // kept for read() call sites below
-{
-    const int side = std::min(p.w, p.h);
-    const int minR = std::max(3, side / 14);
-    const int maxR = side / 4;
-
-    QVector<char> darkMask(p.w * p.h, 0);
-    for (int i = 0; i < p.lum.size(); ++i) {
-        darkMask[i] = (p.lum.at(i) < 55) ? 1 : 0;
-    }
-    const QVector<Blob> blobs = components(darkMask, p.w, p.h);
-
-    const Blob *best = nullptr;
-    int bestArea = 0;
-    for (const Blob &blob : blobs) {
-        const int w = blob.width();
-        const int h = blob.height();
-        const int r = std::min(w, h) / 2;
-        if (r < minR || r > maxR) {
-            continue;
-        }
-        // Must be roughly square (circle bounding box)
-        const double aspect = static_cast<double>(w) / std::max(1, h);
-        if (aspect < 0.65 || aspect > 1.55) {
-            continue;
-        }
-        // Area must fill enough of its bounding box (circular fill ≈ π/4 ≈ 0.78)
-        const double circularity = static_cast<double>(blob.area) / (w * h);
-        if (circularity < 0.50) {
-            continue;
-        }
-        // Must be horizontally centered
-        const double cx = blob.cx();
-        const double cy = blob.cy();
-        if (std::abs(cx - p.w * 0.5) > p.w * 0.32) {
-            continue;
-        }
-        if (cy < p.h * 0.15 || cy > p.h * 0.88) {
-            continue;
-        }
-        // Must contain bright pixels (the white icon inside the dark circle)
-        int bright = 0;
-        int total = 0;
-        const int x0 = std::max(0, blob.minX);
-        const int x1 = std::min(p.w - 1, blob.maxX);
-        const int y0 = std::max(0, blob.minY);
-        const int y1 = std::min(p.h - 1, blob.maxY);
-        for (int y = y0; y <= y1; ++y) {
-            for (int x = x0; x <= x1; ++x) {
-                if (p.lum.at(y * p.w + x) > 175) {
-                    ++bright;
-                }
-                ++total;
-            }
-        }
-        // At least 4% of bounding box must be bright (the white icon)
-        if (total == 0 || bright * 25 < total) {
-            continue;
-        }
-        if (blob.area > bestArea) {
-            bestArea = blob.area;
-            best = &blob;
-        }
-    }
-    if (best == nullptr) {
-        return QPoint();
-    }
-    return QPoint(static_cast<int>(std::lround(toFull(best->cx(), p.scale))),
-                  static_cast<int>(std::lround(toFull(best->cy(), p.scale))));
-}
-
-// Detects a dark-grey rectangular play button with a bright triangle inside —
-// the kind used by video ad players (dark background, white ▶ icon, any aspect ratio).
-QPoint findDarkRectPlayButton(const Pix &p)
-{
-    const int side = std::min(p.w, p.h);
-    const int minSide = std::max(3, side / 22);
-    const int maxSide = side / 3;
-
-    // Accept a wider luma range than the pure-black circle button (dark grey counts too).
-    QVector<char> darkMask(p.w * p.h, 0);
-    for (int i = 0; i < p.lum.size(); ++i) {
-        darkMask[i] = (p.lum.at(i) < 90) ? 1 : 0;
-    }
-    const QVector<Blob> blobs = components(darkMask, p.w, p.h);
-
-    const Blob *best = nullptr;
-    int bestArea = 0;
-    for (const Blob &blob : blobs) {
-        const int w = blob.width();
-        const int h = blob.height();
-        if (w < minSide || h < minSide || w > maxSide || h > maxSide) {
-            continue;
-        }
-        // Rectangles and squares are both valid (video players vary).
-        const double aspect = static_cast<double>(w) / std::max(1, h);
-        if (aspect < 0.4 || aspect > 3.5) {
-            continue;
-        }
-        // Must be a fairly solid filled region (not a thin outline).
-        const double fill = static_cast<double>(blob.area) / (w * h);
-        if (fill < 0.45) {
-            continue;
-        }
-        // Avoid pure-black-circle duplicates already caught by findDarkCircleButton.
-        // Those are near-square with circularity > 0.78; we focus on the rest.
-        const bool isCircular = (aspect > 0.65 && aspect < 1.55 && fill > 0.70);
-        if (isCircular) {
-            continue;
-        }
-        // Must contain bright pixels (the white ▶ icon).
-        int bright = 0;
-        int total = 0;
-        for (int y = std::max(0, blob.minY); y <= std::min(p.h - 1, blob.maxY); ++y) {
-            for (int x = std::max(0, blob.minX); x <= std::min(p.w - 1, blob.maxX); ++x) {
-                if (p.lum.at(y * p.w + x) > 160) {
-                    ++bright;
-                }
-                ++total;
-            }
-        }
-        if (total == 0 || bright * 33 < total) { // ≥ 3% bright
-            continue;
-        }
-        if (blob.area > bestArea) {
-            bestArea = blob.area;
-            best = &blob;
-        }
-    }
-    if (best == nullptr) {
-        return QPoint();
-    }
-    return QPoint(static_cast<int>(std::lround(toFull(best->cx(), p.scale))),
-                  static_cast<int>(std::lround(toFull(best->cy(), p.scale))));
-}
 
 QVector<PuzzlePiece> findPieces(const Pix &p, const Axis &rows, const Axis &cols)
 {
@@ -853,9 +628,22 @@ QVector<PuzzlePiece> findPieces(const Pix &p, const Axis &rows, const Axis &cols
     const double splitGap = std::max(6.0, medianOf(widths) * 1.35);
 
     QVector<QVector<Blob>> groups;
+    QVector<QRgb> groupColor;
     for (const Blob &blob : blocks) {
-        if (groups.isEmpty() || blob.cx() - groups.last().last().cx() > splitGap) {
+        const int bx = std::clamp(static_cast<int>(std::lround(blob.cx())), 0, p.w - 1);
+        const int by = std::clamp(static_cast<int>(std::lround(blob.cy())), 0, p.h - 1);
+        const QRgb color = p.colorAt(bx, by);
+        bool startGroup = groups.isEmpty() || blob.cx() - groups.last().last().cx() > splitGap;
+        if (!startGroup && distRgb(color, groupColor.last()) > 60) {
+            // Every tray piece has its own colour: a colour change means the next
+            // piece starts, even when two pieces sit close together. Grouping by
+            // position alone merged neighbours into one bogus shape, and the drag
+            // then started between the pieces and never picked one up.
+            startGroup = true;
+        }
+        if (startGroup) {
             groups.append(QVector<Blob>());
+            groupColor.append(color);
         }
         groups.last().append(blob);
     }
@@ -1164,83 +952,86 @@ PuzzleScene BlockPuzzle::read(const QImage &screen)
         const int y1 = static_cast<int>(std::ceil(rows.center.last() + rows.pitch));
         const Axis cols = fitAxis(pix, colEnergy(pix, y0, y1), false, &scene.note, "cols");
         if (cols.ok && cols.n == rows.n
-            && std::abs(cols.pitch - rows.pitch) <= std::max(cols.pitch, rows.pitch) * 0.28) {
-    scene.boardFound = true;
-    scene.grid = rows.n;
-    scene.filled = QVector<quint8>(scene.grid * scene.grid, 0);
-    scene.colCenter.reserve(scene.grid);
-    scene.rowCenter.reserve(scene.grid);
-    for (double x : cols.center) {
-        scene.colCenter.append(toFull(x, pix.scale));
-    }
-    for (double y : rows.center) {
-        scene.rowCenter.append(toFull(y, pix.scale));
-    }
+            && std::abs(cols.pitch - rows.pitch) <= std::max(cols.pitch, rows.pitch) * 0.06) {
+            QVector<double> colCenter;
+            QVector<double> rowCenter;
+            colCenter.reserve(rows.n);
+            rowCenter.reserve(rows.n);
+            for (double x : cols.center) {
+                colCenter.append(toFull(x, pix.scale));
+            }
+            for (double y : rows.center) {
+                rowCenter.append(toFull(y, pix.scale));
+            }
 
-    const int radius = std::max(2, static_cast<int>(std::lround(toFull(rows.pitch, pix.scale) * 0.12)));
-    QVector<QRgb> samples(scene.grid * scene.grid);
-    QHash<int, int> buckets;
-    QHash<int, QVector<int>> members;
-    for (int r = 0; r < scene.grid; ++r) {
-        for (int c = 0; c < scene.grid; ++c) {
-            const int index = r * scene.grid + c;
-            samples[index] = averagePatch(full, static_cast<int>(std::lround(scene.colCenter.at(c))),
-                                           static_cast<int>(std::lround(scene.rowCenter.at(r))), radius);
-            const QRgb color = samples.at(index);
-            const int key = ((qRed(color) >> 4) << 8) | ((qGreen(color) >> 4) << 4) | (qBlue(color) >> 4);
-            buckets[key] += 1;
-            members[key].append(index);
-        }
-    }
-    int emptyKey = 0;
-    int emptyCount = -1;
-    for (auto it = buckets.cbegin(); it != buckets.cend(); ++it) {
-        if (it.value() > emptyCount) {
-            emptyCount = it.value();
-            emptyKey = it.key();
-        }
-    }
-    long red = 0;
-    long green = 0;
-    long blue = 0;
-    const QVector<int> emptyCells = members.value(emptyKey);
-    for (int index : emptyCells) {
-        red += qRed(samples.at(index));
-        green += qGreen(samples.at(index));
-        blue += qBlue(samples.at(index));
-    }
-    const int emptyN = std::max(1, static_cast<int>(emptyCells.size()));
-    const QRgb emptyColor = qRgb(static_cast<int>(red / emptyN), static_cast<int>(green / emptyN), static_cast<int>(blue / emptyN));
-    for (int i = 0; i < samples.size(); ++i) {
-        scene.filled[i] = distRgb(samples.at(i), emptyColor) > 75 ? 1 : 0;
-    }
+            const int radius = std::max(2, static_cast<int>(std::lround(toFull(rows.pitch, pix.scale) * 0.12)));
+            QVector<QRgb> samples(rows.n * rows.n);
+            QHash<int, int> buckets;
+            QHash<int, QVector<int>> members;
+            for (int r = 0; r < rows.n; ++r) {
+                for (int c = 0; c < rows.n; ++c) {
+                    const int index = r * rows.n + c;
+                    samples[index] = averagePatch(full, static_cast<int>(std::lround(colCenter.at(c))),
+                                                   static_cast<int>(std::lround(rowCenter.at(r))), radius);
+                    const QRgb color = samples.at(index);
+                    const int key = ((qRed(color) >> 4) << 8) | ((qGreen(color) >> 4) << 4) | (qBlue(color) >> 4);
+                    buckets[key] += 1;
+                    members[key].append(index);
+                }
+            }
+
+            // Board cells are flat blocks. A popup full of cards and text also lines
+            // up in rows and columns, but its cells carry icons and labels — the patch
+            // spread gives that away, which keeps the reader from "playing" a menu.
+            const int flatRadius = std::max(3, static_cast<int>(std::lround(toFull(rows.pitch, pix.scale) * 0.18)));
+            QVector<double> spreads;
+            spreads.reserve(samples.size());
+            for (int i = 0; i < samples.size(); ++i) {
+                const int r = i / rows.n;
+                const int c = i % rows.n;
+                spreads.append(patchSpread(full, static_cast<int>(std::lround(colCenter.at(c))),
+                                           static_cast<int>(std::lround(rowCenter.at(r))), flatRadius));
+            }
+            std::sort(spreads.begin(), spreads.end());
+            const double spread75 = spreads.at(spreads.size() * 3 / 4);
+            if (spread75 > 15.0) {
+                scene.note += QStringLiteral("cells not flat: p75 spread %1\n").arg(spread75);
+                return scene;
+            }
+
+            scene.boardFound = true;
+            scene.grid = rows.n;
+            scene.filled = QVector<quint8>(scene.grid * scene.grid, 0);
+            scene.colCenter = colCenter;
+            scene.rowCenter = rowCenter;
+
+            int emptyKey = 0;
+            int emptyCount = -1;
+            for (auto it = buckets.cbegin(); it != buckets.cend(); ++it) {
+                if (it.value() > emptyCount) {
+                    emptyCount = it.value();
+                    emptyKey = it.key();
+                }
+            }
+            long red = 0;
+            long green = 0;
+            long blue = 0;
+            const QVector<int> emptyCells = members.value(emptyKey);
+            for (int index : emptyCells) {
+                red += qRed(samples.at(index));
+                green += qGreen(samples.at(index));
+                blue += qBlue(samples.at(index));
+            }
+            const int emptyN = std::max(1, static_cast<int>(emptyCells.size()));
+            const QRgb emptyColor = qRgb(static_cast<int>(red / emptyN), static_cast<int>(green / emptyN), static_cast<int>(blue / emptyN));
+            for (int i = 0; i < samples.size(); ++i) {
+                scene.filled[i] = distRgb(samples.at(i), emptyColor) > 75 ? 1 : 0;
+            }
 
             scene.pieces = findPieces(pix, rows, cols);
             scene.note.clear();
         } // cols ok
     } // rows ok
-
-    // No board visible — look for ad controls: ▶| skip (right side) and ✕ close (top-right).
-    // Only run when no game button was already detected (green Play Again / Claim).
-    if (!scene.boardFound && !scene.hasButton) {
-        const QPoint skip = findSkipAdButton(pix);
-        if (!skip.isNull()) {
-            scene.hasButton = true;
-            scene.button = skip;
-        } else {
-            const QPoint close = findCloseAdButton(pix);
-            if (!close.isNull()) {
-                scene.hasButton = true;
-                scene.button = close;
-            } else {
-                const QPoint smallGreen = findSmallGreenPlayButton(pix);
-                if (!smallGreen.isNull()) {
-                    scene.hasButton = true;
-                    scene.button = smallGreen;
-                }
-            }
-        }
-    }
 
     return scene;
 }
@@ -1291,33 +1082,55 @@ PuzzleDrag BlockPuzzle::dragFor(const PuzzleScene &scene, const PuzzleMove &move
         return drag;
     }
     const PuzzlePiece &piece = scene.pieces.at(move.piece);
-    double fromX = 0;
-    double fromY = 0;
-    double toX = 0;
-    double toY = 0;
-    int count = 0;
+    // Grab a real block, not the shape's centre: for shapes whose top-left cell
+    // is empty (e.g. "..# / ###") the centre falls into a gap and the touch does
+    // not pick the piece up at all. The translation is the same either way.
+    double sumC = 0;
+    int cells = 0;
+    for (int r = 0; r < piece.shape.rows; ++r) {
+        for (int c = 0; c < piece.shape.cols; ++c) {
+            if (piece.shape.at(r, c)) {
+                sumC += c;
+                ++cells;
+            }
+        }
+    }
+    if (cells == 0) {
+        return drag;
+    }
+    const double midC = sumC / cells;
+    // Prefer the topmost block of the piece: the permanent in-game ad banner sits
+    // at the bottom of the screen and can cover the lower rows of the tray, and a
+    // touch under the banner goes to the ad instead of the piece. The drag vector
+    // is unchanged by which block is grabbed, only the gesture moves up.
+    int pickR = -1;
+    int pickC = -1;
+    double pickDistance = 0;
     for (int r = 0; r < piece.shape.rows; ++r) {
         for (int c = 0; c < piece.shape.cols; ++c) {
             if (!piece.shape.at(r, c)) {
                 continue;
             }
-            const int boardRow = move.row + r;
-            const int boardCol = move.col + c;
-            if (boardRow < 0 || boardCol < 0 || boardRow >= scene.grid || boardCol >= scene.grid) {
-                return PuzzleDrag();
+            if (pickR >= 0 && r != pickR) {
+                continue;
             }
-            fromX += piece.originX + c * piece.pitch;
-            fromY += piece.originY + r * piece.pitch;
-            toX += scene.colCenter.at(boardCol);
-            toY += scene.rowCenter.at(boardRow);
-            ++count;
+            const double distance = std::abs(c - midC);
+            if (pickR < 0 || r < pickR || distance < pickDistance) {
+                pickR = r;
+                pickC = c;
+                pickDistance = distance;
+            }
         }
     }
-    if (count == 0) {
-        return drag;
+    const int boardRow = move.row + pickR;
+    const int boardCol = move.col + pickC;
+    if (boardRow < 0 || boardCol < 0 || boardRow >= scene.grid || boardCol >= scene.grid) {
+        return PuzzleDrag();
     }
-    drag.from = QPoint(static_cast<int>(std::lround(fromX / count)), static_cast<int>(std::lround(fromY / count)));
-    drag.to = QPoint(static_cast<int>(std::lround(toX / count)), static_cast<int>(std::lround(toY / count)));
+    drag.from = QPoint(static_cast<int>(std::lround(piece.originX + pickC * piece.pitch)),
+                       static_cast<int>(std::lround(piece.originY + pickR * piece.pitch)));
+    drag.to = QPoint(static_cast<int>(std::lround(scene.colCenter.at(boardCol))),
+                     static_cast<int>(std::lround(scene.rowCenter.at(boardRow))));
     drag.ok = true;
     return drag;
 }
