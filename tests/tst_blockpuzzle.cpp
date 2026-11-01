@@ -196,6 +196,24 @@ private slots:
         QVERIFY2(scene.hasButton, qPrintable(BlockPuzzle::dump(scene)));
     }
 
+    void ignoresBannerArrowInTheTray()
+    {
+        // A live DUA-LX9 screen with the permanent ad banner at the bottom: the
+        // banner's ">" arrow is exactly one cell, and it used to be read as a
+        // piece. The bot then dragged from inside the banner, which never picks
+        // anything up, and repeated every nudge while the game looked frozen.
+        const QImage image(fixture(QStringLiteral("blockpuzzle-tray-banner.png")));
+        QVERIFY2(!image.isNull(), "missing tests/fixtures/blockpuzzle-tray-banner.png");
+        const PuzzleScene scene = BlockPuzzle::read(image);
+        QVERIFY2(scene.boardFound, qPrintable(BlockPuzzle::dump(scene)));
+        QCOMPARE(scene.grid, 8);
+        QCOMPARE(scene.pieces.size(), 3);
+        for (const PuzzlePiece &piece : scene.pieces) {
+            QVERIFY2(piece.originY < image.height() * 0.86,
+                     qPrintable(QStringLiteral("piece at y = %1 is inside the ad banner").arg(piece.originY)));
+        }
+    }
+
     void reportsNoMove()
     {
         PuzzleScene scene;

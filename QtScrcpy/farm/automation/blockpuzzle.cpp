@@ -602,6 +602,25 @@ QVector<PuzzlePiece> findPieces(const Pix &p, const Axis &rows, const Axis &cols
     }
     const int minSide = std::max(4, static_cast<int>(pitch * 0.22));
     const int maxSide = std::max(minSide + 2, static_cast<int>(pitch * 0.8));
+    // A tray piece stands on the game background. The permanent ad banner is a
+    // bright band across the bottom, and its ">" arrow is exactly one cell: read
+    // as a piece, it makes the bot drag from inside the banner, which never picks
+    // anything up, and the game looks frozen while every nudge is repeated.
+    const auto insideBrightBand = [&](const Blob &blob) {
+        const int y = std::clamp(static_cast<int>(std::lround(blob.cy())), 0, p.h - 1);
+        QVector<int> row;
+        row.reserve(p.w / 2);
+        int bright = 0;
+        for (int x = 2; x < p.w - 2; x += 2) {
+            const int luma = p.lumaAt(x, y);
+            row.append(luma);
+            bright += luma > 170 ? 1 : 0;
+        }
+        if (row.isEmpty()) {
+            return false;
+        }
+        return medianOf(row) > 150 && bright * 2 > row.size();
+    };
     QVector<Blob> blocks;
     for (const Blob &blob : components(mask, p.w, p.h)) {
         if (blob.width() < minSide || blob.height() < minSide || blob.width() > maxSide || blob.height() > maxSide) {
@@ -613,6 +632,9 @@ QVector<PuzzlePiece> findPieces(const Pix &p, const Axis &rows, const Axis &cols
         }
         const double fill = static_cast<double>(blob.area) / (blob.width() * blob.height());
         if (fill < 0.35 || blob.cy() < regionTop || blob.cy() > regionBottom) {
+            continue;
+        }
+        if (insideBrightBand(blob)) {
             continue;
         }
         blocks.append(blob);
