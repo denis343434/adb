@@ -1,0 +1,4 @@
+numpy>=1.24
+# Detection works with the headless build.  If you want --show (a window with
+# the annotated screenshot), install opencv-python instead of this package.
+opencv-python-headless>=4.8
